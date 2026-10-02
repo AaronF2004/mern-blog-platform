@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5000/api/posts';
+//const API_URL = 'http://localhost:5000/api/posts';
+const API_URL = 'https://mern-blog-platform-4elw.onrender.com/api/posts';
 
 const PRESET_CATEGORIES = [
   'All',
