@@ -1,8 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 
-//const API_URL = 'http://localhost:5000/api/posts';
-const API_URL = 'https://mern-blog-platform-4elw.onrender.com/api/posts';
+const API_URL =
+  window.location.hostname === 'localhost'
+    ? 'http://localhost:5000/api/posts'
+    : 'https://mern-blog-platform-4elw.onrender.com/api/posts';
 
 const PRESET_CATEGORIES = [
   'All',
@@ -17,367 +19,1089 @@ const PRESET_CATEGORIES = [
   'Campus Life'
 ];
 
-const INITIAL_FORM_STATE = {
-  title: '',
-  author: '',
-  category: '',
-  imageUrl: '',
-  content: ''
-};
-
 export default function App() {
-  const [posts, setPosts] = useState([]);
+  const [posts, setPosts] = useState(() => {
+    const saved = localStorage.getItem('mern_cached_posts');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [search, setSearch] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [readingPost, setReadingPost] = useState(null);
   const [editId, setEditId] = useState(null);
+
+  // Status & Confirmation Popups
   const [deleteTargetId, setDeleteTargetId] = useState(null);
+  const [deleteCommentTargetId, setDeleteCommentTargetId] = useState(null);
   const [centerAlert, setCenterAlert] = useState(null);
-  const [formData, setFormData] = useState(INITIAL_FORM_STATE);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Authentication State
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('devpress_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isLoginView, setIsLoginView] = useState(true);
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
+
+  // Liked Posts Tracker
+  const [likedPosts, setLikedPosts] = useState(() => {
+    try {
+      const saved = localStorage.getItem('devpress_liked');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Bookmarked Posts Tracker
+  const [bookmarkedPostIds, setBookmarkedPostIds] = useState(() => {
+    try {
+      const saved = localStorage.getItem('devpress_bookmarks');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Reading Progress Bar State
+  const [scrollProgress, setScrollProgress] = useState(0);
+  const articleModalRef = useRef(null);
+
+  // Post Form State with Status
+  const [formData, setFormData] = useState({
+    title: '',
+    author: '',
+    category: '',
+    imageUrl: '',
+    content: '',
+    status: 'published'
+  });
+  const textareaRef = useRef(null);
+
+  // Threaded Comments State
+  const [commentText, setCommentText] = useState('');
+  const [replyParentId, setReplyParentId] = useState(null);
 
   const showAlert = (title, message, type = 'success') => {
     setCenterAlert({ title, message, type });
   };
 
+  const closeAlert = () => {
+    setCenterAlert(null);
+  };
+
   const fetchPosts = async () => {
     try {
-      const res = await axios.get(API_URL, {
-        params: {
-          category: selectedCategory,
-          search: search.trim() || undefined,
-          page: currentPage,
-          limit: 6
-        }
-      });
-      if (res.data && Array.isArray(res.data.posts)) {
-        setPosts(res.data.posts);
-        setTotalPages(res.data.totalPages || 1);
-      } else if (Array.isArray(res.data)) {
-        // Fallback in case backend returns an unpaginated array
+      const res = await axios.get(API_URL);
+      if (Array.isArray(res.data)) {
         setPosts(res.data);
-        setTotalPages(1);
+        localStorage.setItem('mern_cached_posts', JSON.stringify(res.data));
       }
     } catch (err) {
-      console.warn('API fetch failed, check if backend server is running.', err);
+      console.warn('Backend unavailable, showing cached posts.');
     }
   };
 
   useEffect(() => {
     fetchPosts();
-  }, [selectedCategory, search, currentPage]);
+  }, []);
 
+  // Lock background scroll when overlays are active
   useEffect(() => {
-    document.body.style.overflow =
-      readingPost || isModalOpen || deleteTargetId || centerAlert ? 'hidden' : 'unset';
+    if (readingPost || isModalOpen || deleteTargetId || deleteCommentTargetId || centerAlert || isAuthModalOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
     return () => {
       document.body.style.overflow = 'unset';
     };
-  }, [readingPost, isModalOpen, deleteTargetId, centerAlert]);
+  }, [readingPost, isModalOpen, deleteTargetId, deleteCommentTargetId, centerAlert, isAuthModalOpen]);
+
+  // Reading progress tracker
+  const handleArticleScroll = () => {
+    if (articleModalRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = articleModalRef.current;
+      const totalScroll = scrollHeight - clientHeight;
+      if (totalScroll > 0) {
+        const progress = Math.min(100, Math.max(0, (scrollTop / totalScroll) * 100));
+        setScrollProgress(progress);
+      }
+    }
+  };
+
+  // Check if current user is owner of the article
+  const isOwner = (post) => {
+    if (!currentUser) return false;
+    if (currentUser.role === 'admin') return true;
+    if (post.authorId && (post.authorId === currentUser.id || post.authorId === currentUser._id)) {
+      return true;
+    }
+    return post.author?.toLowerCase().trim() === currentUser.name?.toLowerCase().trim();
+  };
+
+  // Bookmark Toggle Handler
+  const toggleBookmark = (postId, e) => {
+    if (e) e.stopPropagation();
+    const isBookmarked = bookmarkedPostIds.includes(postId);
+    const updated = isBookmarked
+      ? bookmarkedPostIds.filter((id) => id !== postId)
+      : [...bookmarkedPostIds, postId];
+
+    setBookmarkedPostIds(updated);
+    localStorage.setItem('devpress_bookmarks', JSON.stringify(updated));
+    showAlert(
+      isBookmarked ? 'Bookmark Removed' : 'Article Saved',
+      isBookmarked ? 'Article removed from your reading list.' : 'Article saved to your Bookmarks list.'
+    );
+  };
+
+  // Auth Handlers
+  const handleAuthInputChange = (e) => {
+    setAuthForm({ ...authForm, [e.target.name]: e.target.value });
+    setAuthError('');
+  };
+
+  const toggleAuthMode = () => {
+    setIsLoginView(!isLoginView);
+    setAuthError('');
+    setAuthForm({ name: '', email: '', password: '' });
+  };
+
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+    setAuthLoading(true);
+
+    const endpoint = isLoginView ? `${API_URL}/auth/login` : `${API_URL}/auth/register`;
+    const payload = isLoginView
+      ? { email: authForm.email, password: authForm.password }
+      : { name: authForm.name, email: authForm.email, password: authForm.password };
+
+    try {
+      const res = await axios.post(endpoint, payload);
+      if (res.data && res.data.token) {
+        localStorage.setItem('devpress_token', res.data.token);
+        localStorage.setItem('devpress_user', JSON.stringify(res.data.user));
+        setCurrentUser(res.data.user);
+        setIsAuthModalOpen(false);
+        setAuthForm({ name: '', email: '', password: '' });
+        showAlert(
+          isLoginView ? 'Welcome Back!' : 'Account Created!',
+          `Signed in as ${res.data.user.name}.`,
+          'success'
+        );
+      }
+    } catch (err) {
+      setAuthError(err.response?.data?.message || 'Authentication failed. Please verify credentials.');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('devpress_token');
+    localStorage.removeItem('devpress_user');
+    setCurrentUser(null);
+    showAlert('Signed Out', 'You have been logged out.', 'danger');
+  };
+
+  // Formatting Toolbar Helper
+  const insertFormatting = (tagStart, tagEnd = '') => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const selected = textarea.value.substring(start, end);
+    const replacement = tagStart + selected + tagEnd;
+
+    const newContent = textarea.value.substring(0, start) + replacement + textarea.value.substring(end);
+    setFormData((prev) => ({ ...prev, content: newContent }));
+  };
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  // Resizes and compresses image to lightweight JPEG base64 to avoid MongoDB limits
   const handleImageFileChange = (e) => {
     const file = e.target.files[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > MAX_WIDTH) {
-          height = Math.round((height * MAX_WIDTH) / width);
-          width = MAX_WIDTH;
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, width, height);
-
-        // Compress image at 70% quality (typically shrinks file to ~80-150KB)
-        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
-        setFormData((prev) => ({ ...prev, imageUrl: compressedBase64 }));
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFormData((prev) => ({ ...prev, imageUrl: reader.result }));
       };
-      img.src = event.target.result;
-    };
-    reader.readAsDataURL(file);
+      reader.readAsDataURL(file);
+    }
   };
 
   const openCreateModal = () => {
     setEditId(null);
-    setFormData(INITIAL_FORM_STATE);
+    setFormData({
+      title: '',
+      author: currentUser ? currentUser.name : '',
+      category: '',
+      imageUrl: '',
+      content: '',
+      status: 'published'
+    });
     setIsModalOpen(true);
   };
 
   const handleEdit = (post, e) => {
     e.stopPropagation();
+    if (!isOwner(post)) {
+      showAlert('Access Denied', 'Only the author of this post can edit it.', 'danger');
+      return;
+    }
     setEditId(post._id);
     setFormData({
-      title: post.title || '',
-      author: post.author || '',
+      title: post.title,
+      author: post.author,
       category: post.category || '',
       imageUrl: post.imageUrl || '',
-      content: post.content || ''
+      content: post.content,
+      status: post.status || 'published'
     });
     setIsModalOpen(true);
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setIsSubmitting(true);
+  const handleSubmit = async (targetStatus = 'published', e) => {
+    if (e) e.preventDefault();
+    const finalCategory = formData.category.trim() || 'Information Technology';
+    const authorName = currentUser?.name || formData.author?.trim() || 'Anonymous';
+    const authorId = currentUser?.id || currentUser?._id || null;
 
     const payload = {
-      ...formData,
-      category: formData.category.trim() || 'General'
+      title: formData.title.trim(),
+      author: authorName,
+      authorId: authorId,
+      category: finalCategory,
+      imageUrl: formData.imageUrl.trim(),
+      content: formData.content.trim(),
+      status: targetStatus,
+      likes: 0,
+      claps: 0,
+      requesterId: authorId,
+      requesterRole: currentUser?.role || 'author'
     };
 
     try {
       if (editId) {
-        await axios.put(`${API_URL}/${editId}`, payload);
-        showAlert('Article Updated', 'Changes saved successfully to database.', 'success');
+        const res = await axios.put(`${API_URL}/${editId}`, payload);
+        const updatedPost = res.data;
+
+        setPosts((prevPosts) => {
+          const updated = prevPosts.map((p) => (p._id === editId ? updatedPost : p));
+          localStorage.setItem('mern_cached_posts', JSON.stringify(updated));
+          return updated;
+        });
+
+        setIsModalOpen(false);
+        showAlert('Article Updated', 'Your changes have been saved.', 'success');
       } else {
-        await axios.post(API_URL, payload);
-        showAlert('Article Published', 'New post successfully published.', 'success');
+        const res = await axios.post(API_URL, payload);
+        const createdPost = res.data;
+
+        setPosts((prevPosts) => {
+          const updated = [createdPost, ...prevPosts];
+          localStorage.setItem('mern_cached_posts', JSON.stringify(updated));
+          return updated;
+        });
+
+        setFormData({
+          title: '',
+          author: currentUser ? currentUser.name : '',
+          category: '',
+          imageUrl: '',
+          content: '',
+          status: 'published'
+        });
+        setIsModalOpen(false);
+
+        setSelectedCategory('All');
+        setSearch('');
+
+        showAlert(
+          targetStatus === 'draft' ? 'Draft Saved' : 'Article Published',
+          targetStatus === 'draft'
+            ? 'Your article has been saved as a private draft.'
+            : 'Your article is now live on the homepage.',
+          'success'
+        );
       }
-      setIsModalOpen(false);
-      fetchPosts();
     } catch (err) {
       console.error('Error saving post:', err);
-      const serverMessage =
-        err.response?.data?.error ||
-        err.response?.data?.message ||
-        (err.response?.status === 413
-          ? 'Image file is too large. Please use a smaller image.'
-          : 'Could not connect to the backend server.');
-      showAlert('Action Failed', serverMessage, 'danger');
-    } finally {
-      setIsSubmitting(false);
+      showAlert(
+        'Action Failed',
+        err.response?.data?.error || err.response?.data?.message || 'Could not save the article.',
+        'danger'
+      );
     }
   };
 
-  const confirmDelete = async () => {
+  const promptDelete = (post, e) => {
+    e.stopPropagation();
+    if (!isOwner(post)) {
+      showAlert('Access Denied', 'Only the author of this post can delete it.', 'danger');
+      return;
+    }
+    setDeleteTargetId(post._id);
+  };
+
+  const confirmDelete = async (e) => {
+    if (e) e.stopPropagation();
     if (!deleteTargetId) return;
     try {
-      await axios.delete(`${API_URL}/${deleteTargetId}`);
+      const requesterId = currentUser?.id || currentUser?._id;
+      const requesterRole = currentUser?.role;
+
+      await axios.delete(`${API_URL}/${deleteTargetId}`, {
+        params: { requesterId, requesterRole }
+      });
+
+      const updated = posts.filter((p) => p._id !== deleteTargetId);
+      setPosts(updated);
+      localStorage.setItem('mern_cached_posts', JSON.stringify(updated));
       if (readingPost && readingPost._id === deleteTargetId) setReadingPost(null);
       setDeleteTargetId(null);
-      showAlert('Article Deleted', 'The article was permanently deleted.', 'danger');
-      fetchPosts();
+      showAlert('Article Deleted', 'The article has been permanently removed.', 'danger');
     } catch (err) {
       console.error('Error deleting post:', err);
+      showAlert('Delete Failed', err.response?.data?.error || 'Could not delete the post.', 'danger');
       setDeleteTargetId(null);
-      showAlert('Delete Failed', 'Could not delete the post from database.', 'danger');
     }
   };
+
+  // Like Toggle Handler
+  const handleLikeToggle = async (postId, e) => {
+    e.stopPropagation();
+    const isCurrentlyLiked = likedPosts.includes(postId);
+    const delta = isCurrentlyLiked ? -1 : 1;
+
+    const nextLiked = isCurrentlyLiked
+      ? likedPosts.filter((id) => id !== postId)
+      : [...likedPosts, postId];
+
+    setLikedPosts(nextLiked);
+    localStorage.setItem('devpress_liked', JSON.stringify(nextLiked));
+
+    const updatedPosts = posts.map((p) => {
+      if (p._id === postId) {
+        const currentCount = typeof p.likes === 'number' ? p.likes : (p.claps || 0);
+        const newCount = Math.max(0, currentCount + delta);
+        return { ...p, likes: newCount, claps: newCount };
+      }
+      return p;
+    });
+
+    setPosts(updatedPosts);
+    localStorage.setItem('mern_cached_posts', JSON.stringify(updatedPosts));
+
+    if (readingPost && readingPost._id === postId) {
+      const currentCount = typeof readingPost.likes === 'number' ? readingPost.likes : (readingPost.claps || 0);
+      const newCount = Math.max(0, currentCount + delta);
+      setReadingPost((prev) => ({ ...prev, likes: newCount, claps: newCount }));
+    }
+
+    try {
+      const res = await axios.patch(`${API_URL}/${postId}/like`, { delta });
+      if (res.data) {
+        const confirmedCount =
+          typeof res.data.likes === 'number' ? res.data.likes : res.data.claps;
+
+        setPosts((prev) => {
+          const synced = prev.map((p) =>
+            p._id === postId ? { ...p, likes: confirmedCount, claps: confirmedCount } : p
+          );
+          localStorage.setItem('mern_cached_posts', JSON.stringify(synced));
+          return synced;
+        });
+      }
+    } catch (err) {
+      console.error('Like database sync error:', err);
+      setLikedPosts(likedPosts);
+      localStorage.setItem('devpress_liked', JSON.stringify(likedPosts));
+      fetchPosts();
+    }
+  };
+
+  // Add Comment
+  const handleAddComment = async (e) => {
+    e.preventDefault();
+    if (!commentText.trim()) return;
+
+    const authorName = currentUser ? currentUser.name : 'Guest Reader';
+    const authorId = currentUser ? (currentUser.id || currentUser._id) : null;
+
+    try {
+      const res = await axios.post(`${API_URL}/${readingPost._id}/comments`, {
+        author: authorName,
+        authorId: authorId,
+        content: commentText,
+        parentId: replyParentId
+      });
+      setReadingPost((prev) => ({ ...prev, comments: res.data }));
+      setPosts((prev) => {
+        const synced = prev.map((p) => (p._id === readingPost._id ? { ...p, comments: res.data } : p));
+        localStorage.setItem('mern_cached_posts', JSON.stringify(synced));
+        return synced;
+      });
+      setCommentText('');
+      setReplyParentId(null);
+    } catch (err) {
+      showAlert('Comment Failed', 'Could not post your reply.', 'danger');
+    }
+  };
+
+  // Open Comment Delete Modal
+  const promptDeleteComment = (commentId, e) => {
+    if (e) e.stopPropagation();
+    setDeleteCommentTargetId(commentId);
+  };
+
+  // Cascade Delete Comment Execution
+  const confirmDeleteComment = async (e) => {
+    if (e) e.stopPropagation();
+    if (!deleteCommentTargetId || !readingPost) return;
+
+    try {
+      const requesterId = currentUser?.id || currentUser?._id || '';
+      const requesterName = currentUser?.name || '';
+      const requesterRole = currentUser?.role || 'author';
+
+      const res = await axios.delete(
+        `${API_URL}/${readingPost._id}/comments/${deleteCommentTargetId}`,
+        {
+          params: { requesterId, requesterName, requesterRole }
+        }
+      );
+
+      setReadingPost((prev) => ({ ...prev, comments: res.data }));
+      setPosts((prev) => {
+        const synced = prev.map((p) => (p._id === readingPost._id ? { ...p, comments: res.data } : p));
+        localStorage.setItem('mern_cached_posts', JSON.stringify(synced));
+        return synced;
+      });
+
+      setDeleteCommentTargetId(null);
+      showAlert('Comment Deleted', 'The comment and all connected replies were removed.');
+    } catch (err) {
+      console.error('Delete comment failed:', err);
+      setDeleteCommentTargetId(null);
+      showAlert('Error', err.response?.data?.message || 'Could not delete comment.', 'danger');
+    }
+  };
+
+  // Copy Article Link
+  const handleCopyLink = (post) => {
+    const url = window.location.href;
+    navigator.clipboard.writeText(`${url}#${post._id}`);
+    showAlert('Link Copied', 'Article link copied to your clipboard!');
+  };
+
+  // Filter posts
+  const filteredPosts = posts.filter((post) => {
+    if (post.status === 'draft' && !isOwner(post)) {
+      return false;
+    }
+
+    const matchesSearch =
+      post.title?.toLowerCase().includes(search.toLowerCase()) ||
+      post.author?.toLowerCase().includes(search.toLowerCase()) ||
+      post.content?.toLowerCase().includes(search.toLowerCase());
+
+    const matchesCategory =
+      selectedCategory === 'All'
+        ? true
+        : selectedCategory === 'Bookmarks'
+        ? bookmarkedPostIds.includes(post._id)
+        : post.category?.toLowerCase() === selectedCategory.toLowerCase();
+
+    return matchesSearch && matchesCategory;
+  });
 
   return (
     <div>
-      {/* Toast Alert Dialog */}
+      {/* 1. Centered Status Dialog */}
       {centerAlert && (
-        <div className="center-toast-overlay" onClick={() => setCenterAlert(null)}>
+        <div className="center-toast-overlay" onClick={closeAlert}>
           <div className="center-toast-box" onClick={(e) => e.stopPropagation()}>
             <div className={`toast-icon-circle ${centerAlert.type}`}>
               {centerAlert.type === 'success' ? '✓' : '✕'}
             </div>
             <h4>{centerAlert.title}</h4>
-            <p style={{ color: '#64748b', margin: '0.5rem 0 1.25rem' }}>{centerAlert.message}</p>
-            <button className="btn-primary" onClick={() => setCenterAlert(null)}>
+            <p>{centerAlert.message}</p>
+            <button className="btn-primary" onClick={closeAlert}>
               Continue
             </button>
           </div>
         </div>
       )}
 
-      {/* Top Navbar */}
+      {/* 2. Top Navbar */}
       <header className="navbar">
         <div className="nav-container">
-          <div
-            className="logo"
-            onClick={() => {
-              setSelectedCategory('All');
-              setCurrentPage(1);
-            }}
-          >
-            DevPress
+          <div className="logo" onClick={() => setSelectedCategory('All')}>
+            Dev<span>Press</span>
           </div>
-          <button className="btn-primary" onClick={openCreateModal}>
-            + Write an Article
-          </button>
+          <div className="auth-actions">
+            {currentUser ? (
+              <>
+                <span className="user-badge">👤 {currentUser.name}</span>
+                <button className="btn-sm" onClick={handleLogout}>
+                  Logout
+                </button>
+              </>
+            ) : (
+              <button
+                className="btn-sm"
+                onClick={() => {
+                  setAuthError('');
+                  setIsAuthModalOpen(true);
+                }}
+              >
+                Sign In
+              </button>
+            )}
+            <button className="btn-primary" onClick={openCreateModal}>
+              + Write an Article
+            </button>
+          </div>
         </div>
       </header>
 
-      {/* Hero Headline & Search */}
+      {/* 3. Hero & Search */}
       <section className="hero">
         <div>
           <h2>Articles & Editorial</h2>
-          <p style={{ color: '#64748b' }}>Insights, industry news, and technical deep dives</p>
+          <p style={{ color: '#64748b' }}>Insights, industry news, and guides</p>
         </div>
         <input
           type="text"
           className="search-input"
-          placeholder="Search articles, authors, topics..."
+          placeholder="Search articles, keywords, authors..."
           value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setCurrentPage(1);
-          }}
+          onChange={(e) => setSearch(e.target.value)}
         />
       </section>
 
-      {/* Category Chips */}
+      {/* 4. Category Filter Chips with Bookmarks Tab */}
       <div className="category-chips">
+        <button
+          className={`chip saved-chip ${selectedCategory === 'Bookmarks' ? 'active' : ''}`}
+          onClick={() => setSelectedCategory('Bookmarks')}
+        >
+          🔖 Saved Bookmarks ({bookmarkedPostIds.length})
+        </button>
+
         {PRESET_CATEGORIES.map((cat) => (
           <button
             key={cat}
             className={`chip ${selectedCategory === cat ? 'active' : ''}`}
-            onClick={() => {
-              setSelectedCategory(cat);
-              setCurrentPage(1);
-            }}
+            onClick={() => setSelectedCategory(cat)}
           >
             {cat}
           </button>
         ))}
       </div>
 
-      {/* Posts Grid */}
+      {/* 5. Synchronized Grid */}
       <main className="posts-grid">
-        {posts.length === 0 ? (
-          <p style={{ color: '#94a3b8', gridColumn: '1 / -1', padding: '4rem 0', textAlign: 'center' }}>
-            No articles found matching criteria.
+        {filteredPosts.length === 0 ? (
+          <p style={{ color: '#94a3b8', gridColumn: '1 / -1', padding: '3rem 0', textAlign: 'center' }}>
+            {selectedCategory === 'Bookmarks'
+              ? 'You have not saved any articles yet. Click the ribbon icon on any post to bookmark it!'
+              : 'No articles found in this category.'}
           </p>
         ) : (
-          posts.map((post, idx) => (
-            <article key={post._id || idx} className="card" onClick={() => setReadingPost(post)}>
-              <img
-                src={
-                  post.imageUrl && post.imageUrl.trim() !== ''
-                    ? post.imageUrl
-                    : `https://picsum.photos/seed/${post._id || idx}/700/400`
-                }
-                alt="Banner"
-                className="card-img"
-              />
-              <div className="card-body">
-                <div className="card-header-row">
-                  <span className="card-tag">{post.category || 'General'}</span>
-                  <span className="read-time">{post.readTime || '2 min read'}</span>
-                </div>
-                <h3 className="card-title">{post.title}</h3>
-                <p className="card-excerpt">{post.excerpt || post.content}</p>
-                <div className="card-footer">
-                  <div className="author-info">
-                    <span className="author-name">{post.author}</span>
-                    <span className="post-date">
-                      {new Date(post.createdAt || Date.now()).toLocaleDateString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric'
-                      })}
-                    </span>
+          filteredPosts.map((post, idx) => {
+            const userIsAuthor = isOwner(post);
+            const isLiked = likedPosts.includes(post._id);
+            const isSaved = bookmarkedPostIds.includes(post._id);
+            const displayLikes = typeof post.likes === 'number' ? post.likes : (post.claps || 0);
+
+            return (
+              <article
+                key={post._id || idx}
+                className="card"
+                onClick={() => {
+                  setReadingPost(post);
+                  setScrollProgress(0);
+                }}
+              >
+                <img
+                  src={
+                    post.imageUrl && post.imageUrl.trim() !== ''
+                      ? post.imageUrl
+                      : `https://picsum.photos/seed/${post._id || idx}/700/400`
+                  }
+                  alt="Banner"
+                  className="card-img"
+                />
+                <div className="card-body">
+                  <div className="card-tag-row">
+                    <span className="card-tag">{post.category || 'General'}</span>
+                    {post.status === 'draft' && <span className="draft-badge">Draft</span>}
                   </div>
-                  <div className="actions">
-                    <button className="btn-sm" onClick={(e) => handleEdit(post, e)}>
-                      Edit
-                    </button>
-                    <button
-                      className="btn-sm delete"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setDeleteTargetId(post._id);
-                      }}
-                    >
-                      Delete
-                    </button>
+
+                  <h3 className="card-title">{post.title}</h3>
+                  <p className="card-excerpt">{post.content.replace(/<[^>]*>/g, '')}</p>
+                  
+                  <div className="card-footer">
+                    <div className="author-info">
+                      <span className="author-name">{post.author}</span>
+                      <span className="post-date">
+                        {post.readTime || 1} min read •{' '}
+                        {new Date(post.createdAt || Date.now()).toLocaleDateString('en-US', {
+                          month: 'short',
+                          day: 'numeric'
+                        })}
+                      </span>
+                    </div>
+
+                    <div className="actions">
+                      {/* Bookmark Button */}
+                      <button
+                        className={`btn-bookmark ${isSaved ? 'bookmarked' : ''}`}
+                        title={isSaved ? 'Remove Bookmark' : 'Save for Later'}
+                        onClick={(e) => toggleBookmark(post._id, e)}
+                      >
+                        <svg viewBox="0 0 24 24">
+                          <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" />
+                        </svg>
+                      </button>
+
+                      {/* Like Action Pill */}
+                      <button
+                        className={`wp-clap-pill ${isLiked ? 'clapped' : ''}`}
+                        title={isLiked ? 'Unlike' : 'Like'}
+                        onClick={(e) => handleLikeToggle(post._id, e)}
+                      >
+                        <svg viewBox="0 0 24 24">
+                          <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                        </svg>
+                        <span>{displayLikes}</span>
+                      </button>
+
+                      {/* Author Controls */}
+                      {userIsAuthor && (
+                        <>
+                          <button
+                            className="btn-sm"
+                            title="Edit article"
+                            onClick={(e) => handleEdit(post, e)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            className="btn-sm delete"
+                            title="Delete article"
+                            onClick={(e) => promptDelete(post, e)}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            </article>
-          ))
+              </article>
+            );
+          })
         )}
       </main>
 
-      {/* Pagination Bar */}
-      {totalPages > 1 && (
-        <div className="pagination">
-          <button
-            disabled={currentPage === 1}
-            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-          >
-            &laquo; Prev
-          </button>
-          {Array.from({ length: totalPages }, (_, i) => i + 1).map((num) => (
-            <button
-              key={num}
-              className={currentPage === num ? 'active' : ''}
-              onClick={() => setCurrentPage(num)}
-            >
-              {num}
-            </button>
-          ))}
-          <button
-            disabled={currentPage === totalPages}
-            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-          >
-            Next &raquo;
-          </button>
+      {/* 6. Centered Delete Article Confirmation Popup */}
+      {deleteTargetId && (
+        <div className="modal-overlay" onClick={() => setDeleteTargetId(null)}>
+          <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-icon">!</div>
+            <h3>Delete Article?</h3>
+            <p>Are you sure you want to permanently delete your article? This cannot be undone.</p>
+            <div className="confirm-actions">
+              <button
+                type="button"
+                className="btn-sm"
+                onClick={() => setDeleteTargetId(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-danger"
+                onClick={confirmDelete}
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Reading View Modal */}
+      {/* 7. Centered Standard Delete Comment Confirmation Popup */}
+      {deleteCommentTargetId && (
+        <div
+          className="modal-overlay"
+          style={{ zIndex: 120 }}
+          onClick={() => setDeleteCommentTargetId(null)}
+        >
+          <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-icon">!</div>
+            <h3>Delete Comment?</h3>
+            <p>
+              Are you sure you want to delete this comment? All replies attached to this discussion thread will also be removed.
+            </p>
+            <div className="confirm-actions">
+              <button
+                type="button"
+                className="btn-sm"
+                onClick={() => setDeleteCommentTargetId(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-danger"
+                onClick={confirmDeleteComment}
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 8. Centered Reading View Modal */}
       {readingPost && (
         <div className="modal-overlay" onClick={() => setReadingPost(null)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          <div
+            className="modal-content"
+            ref={articleModalRef}
+            onScroll={handleArticleScroll}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Reading Progress Indicator */}
+            <div className="reading-progress-track">
+              <div
+                className="reading-progress-fill"
+                style={{ width: `${scrollProgress}%` }}
+              />
+            </div>
+
             <div className="modal-header">
-              <span className="card-tag">{readingPost.category || 'General'}</span>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <span className="card-tag">{readingPost.category || 'General'}</span>
+                {readingPost.status === 'draft' && <span className="draft-badge">Draft</span>}
+              </div>
               <button className="close-btn" onClick={() => setReadingPost(null)}>
                 &times;
               </button>
             </div>
+
             <img
               src={
                 readingPost.imageUrl && readingPost.imageUrl.trim() !== ''
                   ? readingPost.imageUrl
                   : `https://picsum.photos/seed/${readingPost._id}/900/500`
               }
-              alt="Banner"
+              alt="Article Banner"
               className="article-detail-img"
             />
-            <h1
-              style={{
-                fontFamily: "'EB Garamond', Georgia, serif",
-                fontSize: '2.4rem',
-                lineHeight: '1.2',
-                marginBottom: '0.5rem'
-              }}
-            >
+            
+            <h1 style={{ fontSize: '1.9rem', marginBottom: '0.5rem', lineHeight: '1.25' }}>
               {readingPost.title}
             </h1>
-            <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
-              By <strong>{readingPost.author}</strong> •{' '}
+            
+            <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '1.25rem' }}>
+              By <strong>{readingPost.author}</strong> • {readingPost.readTime || 1} min read •{' '}
               {new Date(readingPost.createdAt || Date.now()).toLocaleDateString('en-US', {
                 month: 'long',
                 day: 'numeric',
                 year: 'numeric'
-              })}{' '}
-              • {readingPost.readTime || '2 min read'}
+              })}
             </p>
+
+            {/* Social Sharing Row */}
+            <div className="social-share-row">
+              <span className="share-label">Share:</span>
+              <a
+                className="share-btn"
+                href={`https://api.whatsapp.com/send?text=${encodeURIComponent(
+                  readingPost.title + ' - Read here: ' + window.location.href
+                )}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                WhatsApp
+              </a>
+              <a
+                className="share-btn"
+                href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(
+                  readingPost.title
+                )}&url=${encodeURIComponent(window.location.href)}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Twitter/X
+              </a>
+              <a
+                className="share-btn"
+                href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(
+                  window.location.href
+                )}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                LinkedIn
+              </a>
+              <button
+                type="button"
+                className="share-btn"
+                onClick={() => handleCopyLink(readingPost)}
+              >
+                🔗 Copy Link
+              </button>
+            </div>
+
             <div className="article-content">{readingPost.content}</div>
-            <div className="modal-footer">
+
+            {/* Engagement Bar with Bookmark, Like Action & Author Controls */}
+            <div className="engagement-bar">
+              <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+                <button
+                  className={`wp-clap-pill ${likedPosts.includes(readingPost._id) ? 'clapped' : ''}`}
+                  title={likedPosts.includes(readingPost._id) ? 'Unlike' : 'Like'}
+                  onClick={(e) => handleLikeToggle(readingPost._id, e)}
+                >
+                  <svg viewBox="0 0 24 24">
+                    <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                  </svg>
+                  <span>
+                    {typeof readingPost.likes === 'number' ? readingPost.likes : (readingPost.claps || 0)}{' '}
+                    {likedPosts.includes(readingPost._id) ? 'Liked' : 'Likes'}
+                  </span>
+                </button>
+
+                <button
+                  className={`btn-bookmark ${bookmarkedPostIds.includes(readingPost._id) ? 'bookmarked' : ''}`}
+                  onClick={(e) => toggleBookmark(readingPost._id, e)}
+                  title="Bookmark Article"
+                  style={{ width: '38px', height: '38px' }}
+                >
+                  <svg viewBox="0 0 24 24">
+                    <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" />
+                  </svg>
+                </button>
+              </div>
+
+              {isOwner(readingPost) && (
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button className="btn-sm" onClick={(e) => handleEdit(readingPost, e)}>
+                    Edit Post
+                  </button>
+                  <button className="btn-sm delete" onClick={(e) => promptDelete(readingPost, e)}>
+                    Delete Post
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Creative Discussion & Threaded Comments Section */}
+            <div className="creative-discussion">
+              <div className="discussion-header">
+                <h3>Discussion</h3>
+                <span className="comment-count-badge">
+                  {readingPost.comments?.length || 0}
+                </span>
+              </div>
+
+              {/* Input Card */}
+              <form onSubmit={handleAddComment} className="comment-input-card">
+                {replyParentId && (
+                  <div className="reply-badge">
+                    <span>↳ Replying to a comment...</span>
+                    <button type="button" onClick={() => setReplyParentId(null)}>
+                      (Cancel)
+                    </button>
+                  </div>
+                )}
+                <textarea
+                  placeholder={
+                    currentUser
+                      ? `What are your thoughts, ${currentUser.name}?`
+                      : 'Share your thoughts or feedback...'
+                  }
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  required
+                />
+                <div className="comment-input-footer">
+                  <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                    Be respectful and constructive.
+                  </span>
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    style={{ padding: '0.4rem 1.1rem', fontSize: '0.85rem' }}
+                  >
+                    Post Comment
+                  </button>
+                </div>
+              </form>
+
+              {/* Comments Feed */}
+              <div className="comments-list">
+                {!readingPost.comments || readingPost.comments.length === 0 ? (
+                  <p
+                    style={{
+                      color: '#94a3b8',
+                      fontSize: '0.88rem',
+                      fontStyle: 'italic',
+                      textAlign: 'center',
+                      padding: '1rem'
+                    }}
+                  >
+                    No comments yet. Start the conversation!
+                  </p>
+                ) : (
+                  readingPost.comments
+                    ?.filter((c) => !c.parentId)
+                    .map((parent) => {
+                      const isCommentAuthor =
+                        currentUser &&
+                        (currentUser.name?.toLowerCase().trim() === parent.author?.toLowerCase().trim() ||
+                          (parent.authorId && (parent.authorId === currentUser.id || parent.authorId === currentUser._id)) ||
+                          currentUser.role === 'admin' ||
+                          isOwner(readingPost));
+
+                      return (
+                        <div key={parent._id} className="comment-node">
+                          <div className="creative-comment">
+                            <div className="comment-meta">
+                              <div className="comment-author-group">
+                                <div className="comment-avatar">
+                                  {parent.author ? parent.author[0] : 'U'}
+                                </div>
+                                <div>
+                                  <span className="comment-author-name">{parent.author}</span>
+                                  {parent.author?.toLowerCase().trim() === readingPost.author?.toLowerCase().trim() && (
+                                    <span className="author-chip" style={{ marginLeft: '0.4rem' }}>
+                                      Author
+                                    </span>
+                                  )}
+                                  <div className="comment-date">
+                                    {new Date(parent.createdAt || Date.now()).toLocaleDateString('en-US', {
+                                      month: 'short',
+                                      day: 'numeric'
+                                    })}
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="comment-controls">
+                                <button
+                                  type="button"
+                                  className="btn-reply-link"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setReplyParentId(parent._id);
+                                  }}
+                                >
+                                  Reply
+                                </button>
+
+                                {isCommentAuthor && (
+                                  <button
+                                    type="button"
+                                    className="btn-delete-comment"
+                                    title="Delete comment"
+                                    onClick={(e) => promptDeleteComment(parent._id, e)}
+                                  >
+                                    <svg viewBox="0 0 24 24">
+                                      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                                    </svg>
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+
+                            <p className="comment-body-text">{parent.content}</p>
+                          </div>
+
+                          {/* Nested Replies */}
+                          {readingPost.comments
+                            ?.filter((c) => c.parentId === parent._id)
+                            .map((reply) => {
+                              const isReplyAuthor =
+                                currentUser &&
+                                (currentUser.name?.toLowerCase().trim() === reply.author?.toLowerCase().trim() ||
+                                  (reply.authorId && (reply.authorId === currentUser.id || reply.authorId === currentUser._id)) ||
+                                  currentUser.role === 'admin' ||
+                                  isOwner(readingPost));
+
+                              return (
+                                <div key={reply._id} className="creative-comment is-reply">
+                                  <div className="comment-meta">
+                                    <div className="comment-author-group">
+                                      <div
+                                        className="comment-avatar"
+                                        style={{ width: '26px', height: '26px', fontSize: '0.72rem' }}
+                                      >
+                                        {reply.author ? reply.author[0] : 'U'}
+                                      </div>
+                                      <div>
+                                        <span className="comment-author-name">{reply.author}</span>
+                                        {reply.author?.toLowerCase().trim() === readingPost.author?.toLowerCase().trim() && (
+                                          <span className="author-chip" style={{ marginLeft: '0.4rem' }}>
+                                            Author
+                                          </span>
+                                        )}
+                                        <div className="comment-date">
+                                          {new Date(reply.createdAt || Date.now()).toLocaleDateString('en-US', {
+                                            month: 'short',
+                                            day: 'numeric'
+                                          })}
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="comment-controls">
+                                      {isReplyAuthor && (
+                                        <button
+                                          type="button"
+                                          className="btn-delete-comment"
+                                          title="Delete reply"
+                                          onClick={(e) => promptDeleteComment(reply._id, e)}
+                                        >
+                                          <svg viewBox="0 0 24 24">
+                                            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                                          </svg>
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <p className="comment-body-text" style={{ marginLeft: '2.2rem' }}>
+                                    {reply.content}
+                                  </p>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      );
+                    })
+                )}
+              </div>
+            </div>
+
+            <div className="modal-footer" style={{ marginTop: '2rem' }}>
               <button className="btn-primary" onClick={() => setReadingPost(null)}>
                 Done Reading
               </button>
@@ -386,38 +1110,18 @@ export default function App() {
         </div>
       )}
 
-      {/* Delete Confirmation Modal */}
-      {deleteTargetId && (
-        <div className="modal-overlay" onClick={() => setDeleteTargetId(null)}>
-          <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
-            <div className="toast-icon-circle danger">!</div>
-            <h3>Delete Article?</h3>
-            <p style={{ color: '#64748b', margin: '0.5rem 0 1.5rem' }}>
-              This action cannot be undone. Are you sure you want to permanently delete this post?
-            </p>
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem' }}>
-              <button className="btn-sm" onClick={() => setDeleteTargetId(null)}>
-                Cancel
-              </button>
-              <button className="btn-danger" onClick={confirmDelete}>
-                Yes, Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Write / Edit Modal */}
+      {/* 9. Create / Edit Article Modal */}
       {isModalOpen && (
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>{editId ? 'Edit Article' : 'Draft New Article'}</h3>
+              <h3>{editId ? 'Edit Article' : 'Write a New Article'}</h3>
               <button className="close-btn" onClick={() => setIsModalOpen(false)}>
                 &times;
               </button>
             </div>
-            <form className="modal-form" onSubmit={handleSubmit}>
+            
+            <form className="modal-form" onSubmit={(e) => handleSubmit('published', e)}>
               <input
                 name="title"
                 placeholder="Post title..."
@@ -425,22 +1129,25 @@ export default function App() {
                 onChange={handleChange}
                 required
               />
-              <input
-                name="author"
-                placeholder="Author name..."
-                value={formData.author}
-                onChange={handleChange}
-                required
-              />
+              {!currentUser && (
+                <input
+                  name="author"
+                  placeholder="Author name..."
+                  value={formData.author}
+                  onChange={handleChange}
+                  required
+                />
+              )}
+
               <input
                 name="category"
-                list="category-options"
-                placeholder="Category (e.g. Artificial Intelligence, Healthcare)..."
+                list="category-suggestions"
+                placeholder="Choose or type a category (e.g. Healthcare, Information Technology)..."
                 value={formData.category}
                 onChange={handleChange}
                 required
               />
-              <datalist id="category-options">
+              <datalist id="category-suggestions">
                 {PRESET_CATEGORIES.filter((c) => c !== 'All').map((cat) => (
                   <option key={cat} value={cat} />
                 ))}
@@ -448,17 +1155,42 @@ export default function App() {
 
               <div className="file-upload-box">
                 <label>Select Cover Image:</label>
-                <input type="file" accept="image/*" onChange={handleImageFileChange} />
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageFileChange}
+                />
               </div>
 
               {formData.imageUrl && (
-                <img src={formData.imageUrl} alt="Selected Preview" className="image-preview" />
+                <img
+                  src={formData.imageUrl}
+                  alt="Selected Preview"
+                  className="image-preview"
+                />
               )}
 
+              {/* Formatting Toolbar */}
+              <div className="editor-toolbar">
+                <button type="button" className="toolbar-btn" onClick={() => insertFormatting('**', '**')}>
+                  Bold
+                </button>
+                <button type="button" className="toolbar-btn" onClick={() => insertFormatting('*', '*')}>
+                  Italic
+                </button>
+                <button type="button" className="toolbar-btn" onClick={() => insertFormatting('\n## ')}>
+                  H2
+                </button>
+                <button type="button" className="toolbar-btn" onClick={() => insertFormatting('```\n', '\n```')}>
+                  Code
+                </button>
+              </div>
+
               <textarea
+                ref={textareaRef}
                 name="content"
-                placeholder="Write your article content..."
-                rows="8"
+                className="rich-editor-area"
+                placeholder="Write your article content here..."
                 value={formData.content}
                 onChange={handleChange}
                 required
@@ -469,19 +1201,105 @@ export default function App() {
                   type="button"
                   className="btn-sm"
                   onClick={() => setIsModalOpen(false)}
-                  disabled={isSubmitting}
                 >
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary" disabled={isSubmitting}>
-                  {isSubmitting
-                    ? 'Saving...'
-                    : editId
-                    ? 'Update Article'
-                    : 'Publish Article'}
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={(e) => handleSubmit('draft', e)}
+                >
+                  Save as Draft
+                </button>
+                <button type="submit" className="btn-primary">
+                  {editId ? 'Update & Publish' : 'Publish Article'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 10. Authentication Modal */}
+      {isAuthModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsAuthModalOpen(false)}>
+          <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
+            <h3>{isLoginView ? 'Sign In to DevPress' : 'Create an Account'}</h3>
+            <p style={{ marginBottom: '1.25rem' }}>
+              {isLoginView
+                ? 'Enter your email and password to access your author profile.'
+                : 'Join DevPress to write and publish articles under your name.'}
+            </p>
+
+            {authError && (
+              <div
+                style={{
+                  background: '#fee2e2',
+                  color: '#b91c1c',
+                  padding: '0.65rem 0.85rem',
+                  borderRadius: '8px',
+                  fontSize: '0.85rem',
+                  marginBottom: '1rem',
+                  textAlign: 'left'
+                }}
+              >
+                ⚠ {authError}
+              </div>
+            )}
+
+            <form onSubmit={handleAuthSubmit} className="modal-form">
+              {!isLoginView && (
+                <input
+                  name="name"
+                  type="text"
+                  placeholder="Full Name"
+                  value={authForm.name}
+                  onChange={handleAuthInputChange}
+                  required
+                />
+              )}
+              <input
+                name="email"
+                type="email"
+                placeholder="Email Address"
+                value={authForm.email}
+                onChange={handleAuthInputChange}
+                required
+              />
+              <input
+                name="password"
+                type="password"
+                placeholder="Password (min 6 characters)"
+                value={authForm.password}
+                onChange={handleAuthInputChange}
+                required
+              />
+              <button
+                type="submit"
+                className="btn-primary"
+                style={{ width: '100%', marginBottom: '1rem' }}
+                disabled={authLoading}
+              >
+                {authLoading ? 'Authenticating...' : isLoginView ? 'Sign In' : 'Register'}
+              </button>
+            </form>
+
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+              {isLoginView ? "Don't have an account? " : 'Already registered? '}
+              <button
+                type="button"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--accent)',
+                  cursor: 'pointer',
+                  fontWeight: 'bold'
+                }}
+                onClick={toggleAuthMode}
+              >
+                {isLoginView ? 'Register here' : 'Sign in here'}
+              </button>
+            </p>
           </div>
         </div>
       )}
