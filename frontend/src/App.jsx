@@ -29,7 +29,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [search, setSearch] = useState('');
-  const [sortBy, setSortBy] = useState('newest'); // 'newest', 'oldest', 'mostViewed'
+  const [sortBy, setSortBy] = useState('newest');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [readingPost, setReadingPost] = useState(null);
   const [editId, setEditId] = useState(null);
@@ -159,14 +159,12 @@ export default function App() {
     setReadingPost(post);
     setScrollProgress(0);
 
-    // Optimistically increment views in local state
     const updatedPosts = posts.map((p) =>
       p._id === post._id ? { ...p, views: (p.views || 0) + 1 } : p
     );
     setPosts(updatedPosts);
     localStorage.setItem('mern_cached_posts', JSON.stringify(updatedPosts));
 
-    // Persist view to database
     try {
       const res = await axios.patch(`${API_URL}/${post._id}/view`);
       if (res.data && typeof res.data.views === 'number') {
@@ -253,7 +251,7 @@ export default function App() {
     showAlert('Signed Out', 'You have been logged out.', 'danger');
   };
 
-  // Formatting Toolbar Helper
+  // Toolbar Formatting Helper
   const insertFormatting = (tagStart, tagEnd = '') => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -608,7 +606,6 @@ export default function App() {
       if (sortBy === 'oldest') {
         return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
       }
-      // Default: 'newest'
       return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
     });
 
@@ -639,7 +636,7 @@ export default function App() {
           <div className="auth-actions">
             {currentUser ? (
               <>
-                <span className="user-badge">👤 {currentUser.name}</span>
+                <span className="user-badge" title={currentUser.name}>👤 {currentUser.name}</span>
                 <button className="btn-sm" onClick={handleLogout}>
                   Logout
                 </button>
@@ -656,7 +653,7 @@ export default function App() {
               </button>
             )}
             <button className="btn-primary" onClick={openCreateModal}>
-              + Write an Article
+              + Write
             </button>
           </div>
         </div>
@@ -666,14 +663,14 @@ export default function App() {
       <section className="hero">
         <div>
           <h2>Articles & Editorial</h2>
-          <p style={{ color: '#64748b' }}>Insights, industry news, and guides</p>
+          <p>Insights, industry news, and guides</p>
         </div>
 
         <div className="hero-controls">
           <input
             type="text"
             className="search-input"
-            placeholder="Search articles, keywords, authors..."
+            placeholder="Search articles..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -683,31 +680,33 @@ export default function App() {
             value={sortBy}
             onChange={(e) => setSortBy(e.target.value)}
           >
-            <option value="newest">📅 Sort by: Newest</option>
-            <option value="oldest">⏳ Sort by: Oldest</option>
+            <option value="newest">📅 Newest</option>
+            <option value="oldest">⏳ Oldest</option>
             <option value="mostViewed">🔥 Most Viewed</option>
           </select>
         </div>
       </section>
 
-      {/* 4. Category Filter Chips with Bookmarks Tab */}
-      <div className="category-chips">
-        <button
-          className={`chip saved-chip ${selectedCategory === 'Bookmarks' ? 'active' : ''}`}
-          onClick={() => setSelectedCategory('Bookmarks')}
-        >
-          🔖 Saved Bookmarks ({bookmarkedPostIds.length})
-        </button>
-
-        {PRESET_CATEGORIES.map((cat) => (
+      {/* 4. Category Filter Chips (Horizontal Scrollable on Mobile) */}
+      <div className="category-chips-wrapper">
+        <div className="category-chips">
           <button
-            key={cat}
-            className={`chip ${selectedCategory === cat ? 'active' : ''}`}
-            onClick={() => setSelectedCategory(cat)}
+            className={`chip saved-chip ${selectedCategory === 'Bookmarks' ? 'active' : ''}`}
+            onClick={() => setSelectedCategory('Bookmarks')}
           >
-            {cat}
+            🔖 Bookmarks ({bookmarkedPostIds.length})
           </button>
-        ))}
+
+          {PRESET_CATEGORIES.map((cat) => (
+            <button
+              key={cat}
+              className={`chip ${selectedCategory === cat ? 'active' : ''}`}
+              onClick={() => setSelectedCategory(cat)}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* 5. Synchronized Grid or Loading Spinner */}
@@ -779,7 +778,6 @@ export default function App() {
                       </div>
 
                       <div className="actions">
-                        {/* Bookmark Button */}
                         <button
                           className={`btn-bookmark ${isSaved ? 'bookmarked' : ''}`}
                           title={isSaved ? 'Remove Bookmark' : 'Save for Later'}
@@ -790,7 +788,6 @@ export default function App() {
                           </svg>
                         </button>
 
-                        {/* Like Action Pill */}
                         <button
                           className={`wp-clap-pill ${isLiked ? 'clapped' : ''}`}
                           title={isLiked ? 'Unlike' : 'Like'}
@@ -802,7 +799,6 @@ export default function App() {
                           <span>{displayLikes}</span>
                         </button>
 
-                        {/* Author Controls */}
                         {userIsAuthor && (
                           <>
                             <button
@@ -858,7 +854,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 7. Centered Standard Delete Comment Confirmation Popup */}
+      {/* 7. Centered Delete Comment Confirmation Popup */}
       {deleteCommentTargetId && (
         <div
           className="modal-overlay"
@@ -900,7 +896,6 @@ export default function App() {
             onScroll={handleArticleScroll}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Reading Progress Indicator */}
             <div className="reading-progress-track">
               <div
                 className="reading-progress-fill"
@@ -909,7 +904,7 @@ export default function App() {
             </div>
 
             <div className="modal-header">
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
                 <span className="card-tag">{readingPost.category || 'General'}</span>
                 {readingPost.status === 'draft' && <span className="draft-badge">Draft</span>}
               </div>
@@ -928,14 +923,14 @@ export default function App() {
               className="article-detail-img"
             />
             
-            <h1 style={{ fontSize: '1.9rem', marginBottom: '0.5rem', lineHeight: '1.25' }}>
+            <h1 style={{ fontSize: '1.65rem', marginBottom: '0.5rem', lineHeight: '1.25' }}>
               {readingPost.title}
             </h1>
             
-            <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '1.25rem' }}>
+            <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '1rem' }}>
               By <strong>{readingPost.author}</strong> • {readingPost.readTime || 1} min read • 👁️ {readingPost.views || 0} views •{' '}
               {new Date(readingPost.createdAt || Date.now()).toLocaleDateString('en-US', {
-                month: 'long',
+                month: 'short',
                 day: 'numeric',
                 year: 'numeric'
               })}
@@ -945,7 +940,6 @@ export default function App() {
             <div className="social-share-row">
               <span className="share-label">Share:</span>
               
-              {/* WhatsApp Icon */}
               <a
                 className="share-icon-btn whatsapp"
                 title="Share on WhatsApp"
@@ -960,7 +954,6 @@ export default function App() {
                 </svg>
               </a>
 
-              {/* X / Twitter Icon */}
               <a
                 className="share-icon-btn x-twitter"
                 title="Share on X"
@@ -975,7 +968,6 @@ export default function App() {
                 </svg>
               </a>
 
-              {/* LinkedIn Icon */}
               <a
                 className="share-icon-btn linkedin"
                 title="Share on LinkedIn"
@@ -990,17 +982,16 @@ export default function App() {
                 </svg>
               </a>
 
-              {/* Copy Link Button */}
               <button
                 type="button"
                 className="share-btn-copy"
-                title="Copy Clean Link"
+                title="Copy Link"
                 onClick={() => handleCopyLink(readingPost)}
               >
                 <svg viewBox="0 0 24 24">
                   <path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z" />
                 </svg>
-                <span>Copy Link</span>
+                <span>Copy</span>
               </button>
             </div>
 
@@ -1033,7 +1024,7 @@ export default function App() {
 
             {/* Engagement Bar with Bookmark, Like Action & Author Controls */}
             <div className="engagement-bar">
-              <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <button
                   className={`wp-clap-pill ${likedPosts.includes(readingPost._id) ? 'clapped' : ''}`}
                   title={likedPosts.includes(readingPost._id) ? 'Unlike' : 'Like'}
@@ -1043,8 +1034,7 @@ export default function App() {
                     <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
                   </svg>
                   <span>
-                    {typeof readingPost.likes === 'number' ? readingPost.likes : (readingPost.claps || 0)}{' '}
-                    {likedPosts.includes(readingPost._id) ? 'Liked' : 'Likes'}
+                    {typeof readingPost.likes === 'number' ? readingPost.likes : (readingPost.claps || 0)}
                   </span>
                 </button>
 
@@ -1052,7 +1042,7 @@ export default function App() {
                   className={`btn-bookmark ${bookmarkedPostIds.includes(readingPost._id) ? 'bookmarked' : ''}`}
                   onClick={(e) => toggleBookmark(readingPost._id, e)}
                   title="Bookmark Article"
-                  style={{ width: '38px', height: '38px' }}
+                  style={{ width: '36px', height: '36px' }}
                 >
                   <svg viewBox="0 0 24 24">
                     <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" />
@@ -1061,12 +1051,12 @@ export default function App() {
               </div>
 
               {isOwner(readingPost) && (
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', gap: '0.4rem' }}>
                   <button className="btn-sm" onClick={(e) => handleEdit(readingPost, e)}>
-                    Edit Post
+                    Edit
                   </button>
                   <button className="btn-sm delete" onClick={(e) => promptDelete(readingPost, e)}>
-                    Delete Post
+                    Delete
                   </button>
                 </div>
               )}
@@ -1081,11 +1071,10 @@ export default function App() {
                 </span>
               </div>
 
-              {/* Input Card */}
               <form onSubmit={handleAddComment} noValidate className="comment-input-card">
                 {replyParentId && (
                   <div className="reply-badge">
-                    <span>↳ Replying to a comment...</span>
+                    <span>↳ Replying to comment...</span>
                     <button type="button" onClick={() => setReplyParentId(null)}>
                       (Cancel)
                     </button>
@@ -1096,32 +1085,31 @@ export default function App() {
                   placeholder={
                     currentUser
                       ? `What are your thoughts, ${currentUser.name}?`
-                      : 'Share your thoughts or feedback...'
+                      : 'Share your thoughts...'
                   }
                   value={commentText}
                   onChange={(e) => setCommentText(e.target.value)}
                 />
                 <div className="comment-input-footer">
-                  <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
-                    Be respectful and constructive.
+                  <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
+                    Be respectful.
                   </span>
                   <button
                     type="submit"
                     className="btn-primary"
-                    style={{ padding: '0.4rem 1.1rem', fontSize: '0.85rem' }}
+                    style={{ padding: '0.35rem 0.9rem', fontSize: '0.8rem' }}
                   >
                     Post Comment
                   </button>
                 </div>
               </form>
 
-              {/* Comments Feed */}
               <div className="comments-list">
                 {!readingPost.comments || readingPost.comments.length === 0 ? (
                   <p
                     style={{
                       color: '#94a3b8',
-                      fontSize: '0.88rem',
+                      fontSize: '0.85rem',
                       fontStyle: 'italic',
                       textAlign: 'center',
                       padding: '1rem'
@@ -1151,7 +1139,7 @@ export default function App() {
                                 <div>
                                   <span className="comment-author-name">{parent.author}</span>
                                   {parent.author?.toLowerCase().trim() === readingPost.author?.toLowerCase().trim() && (
-                                    <span className="author-chip" style={{ marginLeft: '0.4rem' }}>
+                                    <span className="author-chip" style={{ marginLeft: '0.3rem' }}>
                                       Author
                                     </span>
                                   )}
@@ -1191,7 +1179,6 @@ export default function App() {
                             <p className="comment-body-text">{parent.content}</p>
                           </div>
 
-                          {/* Nested Replies */}
                           {readingPost.comments
                             ?.filter((c) => c.parentId === parent._id)
                             .map((reply) => {
@@ -1208,14 +1195,14 @@ export default function App() {
                                     <div className="comment-author-group">
                                       <div
                                         className="comment-avatar"
-                                        style={{ width: '26px', height: '26px', fontSize: '0.72rem' }}
+                                        style={{ width: '24px', height: '24px', fontSize: '0.68rem' }}
                                       >
                                         {reply.author ? reply.author[0] : 'U'}
                                       </div>
                                       <div>
                                         <span className="comment-author-name">{reply.author}</span>
                                         {reply.author?.toLowerCase().trim() === readingPost.author?.toLowerCase().trim() && (
-                                          <span className="author-chip" style={{ marginLeft: '0.4rem' }}>
+                                          <span className="author-chip" style={{ marginLeft: '0.3rem' }}>
                                             Author
                                           </span>
                                         )}
@@ -1252,9 +1239,7 @@ export default function App() {
                                     </div>
                                   </div>
 
-                                  <p className="comment-body-text" style={{ marginLeft: '2.2rem' }}>
-                                    {reply.content}
-                                  </p>
+                                  <p className="comment-body-text">{reply.content}</p>
                                 </div>
                               );
                             })}
@@ -1265,7 +1250,7 @@ export default function App() {
               </div>
             </div>
 
-            <div className="modal-footer" style={{ marginTop: '2rem' }}>
+            <div className="modal-footer" style={{ marginTop: '1.5rem' }}>
               <button className="btn-primary" onClick={() => setReadingPost(null)}>
                 Done Reading
               </button>
@@ -1279,7 +1264,7 @@ export default function App() {
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h3>{editId ? 'Edit Article' : 'Write a New Article'}</h3>
+              <h3>{editId ? 'Edit Article' : 'Write an Article'}</h3>
               <button className="close-btn" onClick={() => setIsModalOpen(false)}>
                 &times;
               </button>
@@ -1306,7 +1291,7 @@ export default function App() {
               <input
                 name="category"
                 list="category-suggestions"
-                placeholder="Choose or type a category (e.g. Healthcare, Information Technology)..."
+                placeholder="Category (e.g. Healthcare, Information Technology)..."
                 value={formData.category}
                 onChange={handleChange}
                 required
@@ -1318,7 +1303,7 @@ export default function App() {
               </datalist>
 
               <div className="file-upload-box">
-                <label>Select Cover Image (Auto-Uploaded to Cloudinary):</label>
+                <label>Cover Image (Cloudinary Auto-Upload):</label>
                 <input
                   type="file"
                   accept="image/*"
@@ -1334,7 +1319,6 @@ export default function App() {
                 />
               )}
 
-              {/* Formatting Toolbar */}
               <div className="editor-toolbar">
                 <button type="button" className="toolbar-btn" onClick={() => insertFormatting('**', '**')}>
                   Bold
@@ -1373,10 +1357,10 @@ export default function App() {
                   className="btn-secondary"
                   onClick={(e) => handleSubmit('draft', e)}
                 >
-                  Save as Draft
+                  Save Draft
                 </button>
                 <button type="submit" className="btn-primary">
-                  {editId ? 'Update & Publish' : 'Publish Article'}
+                  {editId ? 'Update' : 'Publish'}
                 </button>
               </div>
             </form>
@@ -1391,8 +1375,8 @@ export default function App() {
             <h3>{isLoginView ? 'Sign In to DevPress' : 'Create an Account'}</h3>
             <p style={{ marginBottom: '1.25rem' }}>
               {isLoginView
-                ? 'Enter your email and password to access your author profile.'
-                : 'Join DevPress to write and publish articles under your name.'}
+                ? 'Enter your credentials to access your profile.'
+                : 'Join DevPress to write and publish articles.'}
             </p>
 
             {authError && (
@@ -1400,9 +1384,9 @@ export default function App() {
                 style={{
                   background: '#fee2e2',
                   color: '#b91c1c',
-                  padding: '0.65rem 0.85rem',
+                  padding: '0.55rem 0.75rem',
                   borderRadius: '8px',
-                  fontSize: '0.85rem',
+                  fontSize: '0.8rem',
                   marginBottom: '1rem',
                   textAlign: 'left'
                 }}
@@ -1448,7 +1432,7 @@ export default function App() {
               </button>
             </form>
 
-            <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
               {isLoginView ? "Don't have an account? " : 'Already registered? '}
               <button
                 type="button"
