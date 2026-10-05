@@ -9,9 +9,7 @@ const upload = require('../config/cloudinary');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'devpress_super_secret_jwt_key_2026';
 
-// ==========================================
-// 1. CLOUDINARY IMAGE UPLOAD ENDPOINT
-// ==========================================
+// 1. Cloudinary upload endpoint
 router.post('/upload', upload.single('image'), (req, res) => {
   try {
     if (!req.file || !req.file.path) {
@@ -24,17 +22,13 @@ router.post('/upload', upload.single('image'), (req, res) => {
   }
 });
 
-// ==========================================
-// 2. AUTHENTICATION ENDPOINTS
-// ==========================================
-
-// Register
+// 2. Authentication
 router.post('/auth/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
 
     if (!name || !email || !password) {
-      return res.status(400).json({ message: 'All fields (Name, Email, Password) are required.' });
+      return res.status(400).json({ message: 'All fields are required.' });
     }
 
     if (password.length < 6) {
@@ -78,7 +72,6 @@ router.post('/auth/register', async (req, res) => {
   }
 });
 
-// Login
 router.post('/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -120,11 +113,7 @@ router.post('/auth/login', async (req, res) => {
   }
 });
 
-// ==========================================
-// 3. POSTS CRUD & SLUG LOOKUP
-// ==========================================
-
-// Get all posts
+// 3. Posts CRUD
 router.get('/', async (req, res) => {
   try {
     const posts = await Post.find().sort({ createdAt: -1 });
@@ -134,7 +123,7 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Get single post by either slug OR ObjectId
+// Get single post by slug or ID
 router.get('/:identifier', async (req, res) => {
   try {
     const { identifier } = req.params;
@@ -169,7 +158,8 @@ router.post('/', async (req, res) => {
       content: content.trim(),
       status: status === 'draft' ? 'draft' : 'published',
       likes: 0,
-      claps: 0
+      claps: 0,
+      views: 0
     });
 
     const savedPost = await newPost.save();
@@ -177,6 +167,22 @@ router.post('/', async (req, res) => {
   } catch (err) {
     console.error('Error creating post:', err);
     return res.status(400).json({ error: err.message });
+  }
+});
+
+// Increment post view count
+router.patch('/:id/view', async (req, res) => {
+  try {
+    const updated = await Post.findByIdAndUpdate(
+      req.params.id,
+      { $inc: { views: 1 } },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ error: 'Post not found' });
+    return res.json({ views: updated.views });
+  } catch (err) {
+    console.error('View increment error:', err);
+    return res.status(500).json({ error: err.message });
   }
 });
 
@@ -220,9 +226,7 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// ==========================================
-// 4. ATOMIC LIKE/UNLIKE
-// ==========================================
+// 4. Like/Clap handler
 const handleLikeToggle = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -248,11 +252,7 @@ const handleLikeToggle = async (req, res) => {
 router.patch('/:id/like', handleLikeToggle);
 router.patch('/:id/clap', handleLikeToggle);
 
-// ==========================================
-// 5. COMMENTS & CASCADING REPLIES DELETE
-// ==========================================
-
-// Add Comment or Reply
+// 5. Comments
 router.post('/:id/comments', async (req, res) => {
   const { author, authorId, content, parentId } = req.body;
   try {
@@ -273,7 +273,7 @@ router.post('/:id/comments', async (req, res) => {
   }
 });
 
-// Cascading Delete Comment (Deletes comment & all attached replies)
+// Cascading Comment Deletion
 router.delete('/:postId/comments/:commentId', async (req, res) => {
   const { postId, commentId } = req.params;
   const { requesterId, requesterName, requesterRole } = req.query;
@@ -297,7 +297,6 @@ router.delete('/:postId/comments/:commentId', async (req, res) => {
       return res.status(403).json({ message: 'You can only delete your own comments.' });
     }
 
-    // Recursively gather IDs of target comment and any child replies
     const idsToDelete = new Set([commentId.toString()]);
     let added = true;
     while (added) {

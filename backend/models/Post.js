@@ -21,13 +21,14 @@ const postSchema = new mongoose.Schema(
     readTime: { type: Number, default: 1 },
     likes: { type: Number, default: 0 },
     claps: { type: Number, default: 0 },
+    views: { type: Number, default: 0 },
     status: { type: String, enum: ['published', 'draft'], default: 'published' },
     comments: [commentSchema]
   },
   { timestamps: true }
 );
 
-// Auto-generate unique clean slug and calculate read time before saving
+// Auto-generate clean slug
 postSchema.pre('validate', function () {
   if (this.isModified('title') || !this.slug) {
     const cleanTitle = (this.title || 'article')
@@ -39,6 +40,7 @@ postSchema.pre('validate', function () {
   }
 });
 
+// Auto-calculate read time
 postSchema.pre('save', function () {
   if (this.isModified('content') && this.content) {
     const plainText = this.content.replace(/<[^>]*>/g, '').trim();

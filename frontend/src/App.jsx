@@ -26,8 +26,10 @@ export default function App() {
     const saved = localStorage.getItem('mern_cached_posts');
     return saved ? JSON.parse(saved) : [];
   });
+  const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState('newest'); // 'newest', 'oldest', 'mostViewed'
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [readingPost, setReadingPost] = useState(null);
   const [editId, setEditId] = useState(null);
@@ -102,6 +104,7 @@ export default function App() {
 
   const fetchPosts = async () => {
     try {
+      setLoading(true);
       const res = await axios.get(API_URL);
       if (Array.isArray(res.data)) {
         setPosts(res.data);
@@ -109,6 +112,8 @@ export default function App() {
       }
     } catch (err) {
       console.warn('Backend unavailable, showing cached posts.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -146,6 +151,29 @@ export default function App() {
         const progress = Math.min(100, Math.max(0, (scrollTop / totalScroll) * 100));
         setScrollProgress(progress);
       }
+    }
+  };
+
+  // Open Reading Modal & Increment View Count
+  const openReadingModal = async (post) => {
+    setReadingPost(post);
+    setScrollProgress(0);
+
+    // Optimistically increment views in local state
+    const updatedPosts = posts.map((p) =>
+      p._id === post._id ? { ...p, views: (p.views || 0) + 1 } : p
+    );
+    setPosts(updatedPosts);
+    localStorage.setItem('mern_cached_posts', JSON.stringify(updatedPosts));
+
+    // Persist view to database
+    try {
+      const res = await axios.patch(`${API_URL}/${post._id}/view`);
+      if (res.data && typeof res.data.views === 'number') {
+        setReadingPost((prev) => (prev ? { ...prev, views: res.data.views } : prev));
+      }
+    } catch (err) {
+      console.error('Failed to increment view counter:', err);
     }
   };
 
@@ -310,6 +338,7 @@ export default function App() {
       status: targetStatus,
       likes: 0,
       claps: 0,
+      views: 0,
       requesterId: authorId,
       requesterRole: currentUser?.role || 'author'
     };
@@ -454,7 +483,7 @@ export default function App() {
     }
   };
 
-  // Reply Jump Helper: jumps to upper box and focuses input
+  // Reply Jump Helper
   const handleReplyClick = (parentId, e) => {
     if (e) e.stopPropagation();
     setReplyParentId(parentId);
@@ -465,7 +494,7 @@ export default function App() {
     }
   };
 
-  // Add Comment with Standard Modal validation (no native browser popup)
+  // Add Comment with Standard Popup
   const handleAddComment = async (e) => {
     e.preventDefault();
 
@@ -543,7 +572,7 @@ export default function App() {
     }
   };
 
-  // Copy Article Link with Slug Fallback
+  // Copy Article Link
   const handleCopyLink = (post) => {
     const slugOrId = post.slug || post._id;
     const url = `${window.location.origin}/#${slugOrId}`;
@@ -551,26 +580,37 @@ export default function App() {
     showAlert('Link Copied', 'Clean article link copied to clipboard!');
   };
 
-  // Filter posts
-  const filteredPosts = posts.filter((post) => {
-    if (post.status === 'draft' && !isOwner(post)) {
-      return false;
-    }
+  // Filter and Sort Posts
+  const filteredPosts = posts
+    .filter((post) => {
+      if (post.status === 'draft' && !isOwner(post)) {
+        return false;
+      }
 
-    const matchesSearch =
-      post.title?.toLowerCase().includes(search.toLowerCase()) ||
-      post.author?.toLowerCase().includes(search.toLowerCase()) ||
-      post.content?.toLowerCase().includes(search.toLowerCase());
+      const matchesSearch =
+        post.title?.toLowerCase().includes(search.toLowerCase()) ||
+        post.author?.toLowerCase().includes(search.toLowerCase()) ||
+        post.content?.toLowerCase().includes(search.toLowerCase());
 
-    const matchesCategory =
-      selectedCategory === 'All'
-        ? true
-        : selectedCategory === 'Bookmarks'
-        ? bookmarkedPostIds.includes(post._id)
-        : post.category?.toLowerCase() === selectedCategory.toLowerCase();
+      const matchesCategory =
+        selectedCategory === 'All'
+          ? true
+          : selectedCategory === 'Bookmarks'
+          ? bookmarkedPostIds.includes(post._id)
+          : post.category?.toLowerCase() === selectedCategory.toLowerCase();
 
-    return matchesSearch && matchesCategory;
-  });
+      return matchesSearch && matchesCategory;
+    })
+    .sort((a, b) => {
+      if (sortBy === 'mostViewed') {
+        return (b.views || 0) - (a.views || 0);
+      }
+      if (sortBy === 'oldest') {
+        return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
+      }
+      // Default: 'newest'
+      return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
+    });
 
   return (
     <div>
@@ -622,19 +662,32 @@ export default function App() {
         </div>
       </header>
 
-      {/* 3. Hero & Search */}
+      {/* 3. Hero, Search & Sort Filter */}
       <section className="hero">
         <div>
           <h2>Articles & Editorial</h2>
           <p style={{ color: '#64748b' }}>Insights, industry news, and guides</p>
         </div>
-        <input
-          type="text"
-          className="search-input"
-          placeholder="Search articles, keywords, authors..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+
+        <div className="hero-controls">
+          <input
+            type="text"
+            className="search-input"
+            placeholder="Search articles, keywords, authors..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+
+          <select
+            className="sort-select"
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+          >
+            <option value="newest">📅 Sort by: Newest</option>
+            <option value="oldest">⏳ Sort by: Oldest</option>
+            <option value="mostViewed">🔥 Most Viewed</option>
+          </select>
+        </div>
       </section>
 
       {/* 4. Category Filter Chips with Bookmarks Tab */}
@@ -657,111 +710,126 @@ export default function App() {
         ))}
       </div>
 
-      {/* 5. Synchronized Grid */}
-      <main className="posts-grid">
-        {filteredPosts.length === 0 ? (
-          <p style={{ color: '#94a3b8', gridColumn: '1 / -1', padding: '3rem 0', textAlign: 'center' }}>
-            {selectedCategory === 'Bookmarks'
-              ? 'You have not saved any articles yet. Click the ribbon icon on any post to bookmark it!'
-              : 'No articles found in this category.'}
-          </p>
-        ) : (
-          filteredPosts.map((post, idx) => {
-            const userIsAuthor = isOwner(post);
-            const isLiked = likedPosts.includes(post._id);
-            const isSaved = bookmarkedPostIds.includes(post._id);
-            const displayLikes = typeof post.likes === 'number' ? post.likes : (post.claps || 0);
+      {/* 5. Synchronized Grid or Loading Spinner */}
+      {loading ? (
+        <div className="loading-container">
+          <div className="spinner"></div>
+          <p>Loading articles...</p>
+        </div>
+      ) : (
+        <main className="posts-grid">
+          {filteredPosts.length === 0 ? (
+            <p style={{ color: '#94a3b8', gridColumn: '1 / -1', padding: '3rem 0', textAlign: 'center' }}>
+              {selectedCategory === 'Bookmarks'
+                ? 'You have not saved any articles yet. Click the ribbon icon on any post to bookmark it!'
+                : 'No articles found matching your criteria.'}
+            </p>
+          ) : (
+            filteredPosts.map((post, idx) => {
+              const userIsAuthor = isOwner(post);
+              const isLiked = likedPosts.includes(post._id);
+              const isSaved = bookmarkedPostIds.includes(post._id);
+              const displayLikes = typeof post.likes === 'number' ? post.likes : (post.claps || 0);
 
-            return (
-              <article
-                key={post._id || idx}
-                className="card"
-                onClick={() => {
-                  setReadingPost(post);
-                  setScrollProgress(0);
-                }}
-              >
-                <img
-                  src={
-                    post.imageUrl && post.imageUrl.trim() !== ''
-                      ? post.imageUrl
-                      : `https://picsum.photos/seed/${post._id || idx}/700/400`
-                  }
-                  alt="Banner"
-                  className="card-img"
-                />
-                <div className="card-body">
-                  <div className="card-tag-row">
-                    <span className="card-tag">{post.category || 'General'}</span>
-                    {post.status === 'draft' && <span className="draft-badge">Draft</span>}
-                  </div>
+              return (
+                <article
+                  key={post._id || idx}
+                  className="card"
+                  onClick={() => openReadingModal(post)}
+                >
+                  <div className="card-img-wrapper">
+                    <img
+                      src={
+                        post.imageUrl && post.imageUrl.trim() !== ''
+                          ? post.imageUrl
+                          : `https://picsum.photos/seed/${post._id || idx}/700/400`
+                      }
+                      alt="Banner"
+                      className="card-img"
+                    />
 
-                  <h3 className="card-title">{post.title}</h3>
-                  <p className="card-excerpt">{post.content.replace(/<[^>]*>/g, '')}</p>
-                  
-                  <div className="card-footer">
-                    <div className="author-info">
-                      <span className="author-name">{post.author}</span>
-                      <span className="post-date">
-                        {post.readTime || 1} min read •{' '}
-                        {new Date(post.createdAt || Date.now()).toLocaleDateString('en-US', {
-                          month: 'short',
-                          day: 'numeric'
-                        })}
-                      </span>
-                    </div>
-
-                    <div className="actions">
-                      {/* Bookmark Button */}
-                      <button
-                        className={`btn-bookmark ${isSaved ? 'bookmarked' : ''}`}
-                        title={isSaved ? 'Remove Bookmark' : 'Save for Later'}
-                        onClick={(e) => toggleBookmark(post._id, e)}
-                      >
-                        <svg viewBox="0 0 24 24">
-                          <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" />
-                        </svg>
-                      </button>
-
-                      {/* Like Action Pill */}
-                      <button
-                        className={`wp-clap-pill ${isLiked ? 'clapped' : ''}`}
-                        title={isLiked ? 'Unlike' : 'Like'}
-                        onClick={(e) => handleLikeToggle(post._id, e)}
-                      >
-                        <svg viewBox="0 0 24 24">
-                          <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                        </svg>
-                        <span>{displayLikes}</span>
-                      </button>
-
-                      {/* Author Controls */}
-                      {userIsAuthor && (
-                        <>
-                          <button
-                            className="btn-sm"
-                            title="Edit article"
-                            onClick={(e) => handleEdit(post, e)}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            className="btn-sm delete"
-                            title="Delete article"
-                            onClick={(e) => promptDelete(post, e)}
-                          >
-                            Delete
-                          </button>
-                        </>
-                      )}
+                    {/* Eye Icon with View Count Badge */}
+                    <div className="views-badge" title={`${post.views || 0} views`}>
+                      <svg viewBox="0 0 24 24">
+                        <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
+                      </svg>
+                      <span>{post.views || 0}</span>
                     </div>
                   </div>
-                </div>
-              </article>
-            );
-          })
-        )}
-      </main>
+
+                  <div className="card-body">
+                    <div className="card-tag-row">
+                      <span className="card-tag">{post.category || 'General'}</span>
+                      {post.status === 'draft' && <span className="draft-badge">Draft</span>}
+                    </div>
+
+                    <h3 className="card-title">{post.title}</h3>
+                    <p className="card-excerpt">{post.content.replace(/<[^>]*>/g, '')}</p>
+                    
+                    <div className="card-footer">
+                      <div className="author-info">
+                        <span className="author-name">{post.author}</span>
+                        <span className="post-date">
+                          {post.readTime || 1} min read •{' '}
+                          {new Date(post.createdAt || Date.now()).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric'
+                          })}
+                        </span>
+                      </div>
+
+                      <div className="actions">
+                        {/* Bookmark Button */}
+                        <button
+                          className={`btn-bookmark ${isSaved ? 'bookmarked' : ''}`}
+                          title={isSaved ? 'Remove Bookmark' : 'Save for Later'}
+                          onClick={(e) => toggleBookmark(post._id, e)}
+                        >
+                          <svg viewBox="0 0 24 24">
+                            <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" />
+                          </svg>
+                        </button>
+
+                        {/* Like Action Pill */}
+                        <button
+                          className={`wp-clap-pill ${isLiked ? 'clapped' : ''}`}
+                          title={isLiked ? 'Unlike' : 'Like'}
+                          onClick={(e) => handleLikeToggle(post._id, e)}
+                        >
+                          <svg viewBox="0 0 24 24">
+                            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                          </svg>
+                          <span>{displayLikes}</span>
+                        </button>
+
+                        {/* Author Controls */}
+                        {userIsAuthor && (
+                          <>
+                            <button
+                              className="btn-sm"
+                              title="Edit article"
+                              onClick={(e) => handleEdit(post, e)}
+                            >
+                              Edit
+                            </button>
+                            <button
+                              className="btn-sm delete"
+                              title="Delete article"
+                              onClick={(e) => promptDelete(post, e)}
+                            >
+                              Delete
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </main>
+      )}
 
       {/* 6. Centered Delete Article Confirmation Popup */}
       {deleteTargetId && (
@@ -823,7 +891,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 8. Centered Reading View Modal with Code Highlight, Copy & Brand SVG Share Icons */}
+      {/* 8. Centered Reading View Modal */}
       {readingPost && (
         <div className="modal-overlay" onClick={() => setReadingPost(null)}>
           <div
@@ -865,7 +933,7 @@ export default function App() {
             </h1>
             
             <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '1.25rem' }}>
-              By <strong>{readingPost.author}</strong> • {readingPost.readTime || 1} min read •{' '}
+              By <strong>{readingPost.author}</strong> • {readingPost.readTime || 1} min read • 👁️ {readingPost.views || 0} views •{' '}
               {new Date(readingPost.createdAt || Date.now()).toLocaleDateString('en-US', {
                 month: 'long',
                 day: 'numeric',
@@ -1013,7 +1081,7 @@ export default function App() {
                 </span>
               </div>
 
-              {/* Input Card with Custom Pop-up Validation (noValidate prevents browser tooltip) */}
+              {/* Input Card */}
               <form onSubmit={handleAddComment} noValidate className="comment-input-card">
                 {replyParentId && (
                   <div className="reply-badge">
@@ -1206,7 +1274,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 9. Create / Edit Article Modal with Cloudinary Direct Upload */}
+      {/* 9. Create / Edit Article Modal */}
       {isModalOpen && (
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
