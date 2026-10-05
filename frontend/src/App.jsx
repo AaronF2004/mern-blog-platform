@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import Prism from 'prismjs';
+import 'prismjs/themes/prism-tomorrow.css';
 
 const API_URL =
   window.location.hostname === 'localhost'
@@ -30,7 +32,7 @@ export default function App() {
   const [readingPost, setReadingPost] = useState(null);
   const [editId, setEditId] = useState(null);
 
-  // Status & Confirmation Popups
+  // Status & Modal Popups
   const [deleteTargetId, setDeleteTargetId] = useState(null);
   const [deleteCommentTargetId, setDeleteCommentTargetId] = useState(null);
   const [centerAlert, setCenterAlert] = useState(null);
@@ -85,9 +87,10 @@ export default function App() {
   });
   const textareaRef = useRef(null);
 
-  // Threaded Comments State
+  // Threaded Comments State & Input Ref for jumping
   const [commentText, setCommentText] = useState('');
   const [replyParentId, setReplyParentId] = useState(null);
+  const commentInputRef = useRef(null);
 
   const showAlert = (title, message, type = 'success') => {
     setCenterAlert({ title, message, type });
@@ -124,6 +127,15 @@ export default function App() {
       document.body.style.overflow = 'unset';
     };
   }, [readingPost, isModalOpen, deleteTargetId, deleteCommentTargetId, centerAlert, isAuthModalOpen]);
+
+  // Syntax highlighting trigger for code snippets
+  useEffect(() => {
+    if (readingPost) {
+      setTimeout(() => {
+        Prism.highlightAll();
+      }, 50);
+    }
+  }, [readingPost]);
 
   // Reading progress tracker
   const handleArticleScroll = () => {
@@ -230,14 +242,24 @@ export default function App() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const handleImageFileChange = (e) => {
+  // Cloudinary Direct Image Upload Handler
+  const handleImageFileChange = async (e) => {
     const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData((prev) => ({ ...prev, imageUrl: reader.result }));
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    const uploadData = new FormData();
+    uploadData.append('image', file);
+
+    try {
+      showAlert('Uploading...', 'Uploading cover image to Cloudinary...', 'success');
+      const res = await axios.post(`${API_URL}/upload`, uploadData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setFormData((prev) => ({ ...prev, imageUrl: res.data.imageUrl }));
+      showAlert('Image Uploaded', 'Cover image uploaded and optimized successfully!', 'success');
+    } catch (err) {
+      console.error('Image upload failed:', err);
+      showAlert('Upload Failed', 'Could not upload image. Please check file size.', 'danger');
     }
   };
 
@@ -432,10 +454,32 @@ export default function App() {
     }
   };
 
-  // Add Comment
+  // Reply Jump Helper: jumps to upper box and focuses input
+  const handleReplyClick = (parentId, e) => {
+    if (e) e.stopPropagation();
+    setReplyParentId(parentId);
+
+    if (commentInputRef.current) {
+      commentInputRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      commentInputRef.current.focus();
+    }
+  };
+
+  // Add Comment with Standard Modal validation (no native browser popup)
   const handleAddComment = async (e) => {
     e.preventDefault();
-    if (!commentText.trim()) return;
+
+    if (!commentText || !commentText.trim()) {
+      showAlert(
+        'Empty Comment',
+        'Please enter some text before posting your comment.',
+        'danger'
+      );
+      if (commentInputRef.current) {
+        commentInputRef.current.focus();
+      }
+      return;
+    }
 
     const authorName = currentUser ? currentUser.name : 'Guest Reader';
     const authorId = currentUser ? (currentUser.id || currentUser._id) : null;
@@ -444,7 +488,7 @@ export default function App() {
       const res = await axios.post(`${API_URL}/${readingPost._id}/comments`, {
         author: authorName,
         authorId: authorId,
-        content: commentText,
+        content: commentText.trim(),
         parentId: replyParentId
       });
       setReadingPost((prev) => ({ ...prev, comments: res.data }));
@@ -499,11 +543,12 @@ export default function App() {
     }
   };
 
-  // Copy Article Link
+  // Copy Article Link with Slug Fallback
   const handleCopyLink = (post) => {
-    const url = window.location.href;
-    navigator.clipboard.writeText(`${url}#${post._id}`);
-    showAlert('Link Copied', 'Article link copied to your clipboard!');
+    const slugOrId = post.slug || post._id;
+    const url = `${window.location.origin}/#${slugOrId}`;
+    navigator.clipboard.writeText(url);
+    showAlert('Link Copied', 'Clean article link copied to clipboard!');
   };
 
   // Filter posts
@@ -778,7 +823,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 8. Centered Reading View Modal */}
+      {/* 8. Centered Reading View Modal with Code Highlight, Copy & Brand SVG Share Icons */}
       {readingPost && (
         <div className="modal-overlay" onClick={() => setReadingPost(null)}>
           <div
@@ -828,49 +873,95 @@ export default function App() {
               })}
             </p>
 
-            {/* Social Sharing Row */}
+            {/* Social Sharing Row with Official SVG Icons */}
             <div className="social-share-row">
               <span className="share-label">Share:</span>
+              
+              {/* WhatsApp Icon */}
               <a
-                className="share-btn"
+                className="share-icon-btn whatsapp"
+                title="Share on WhatsApp"
                 href={`https://api.whatsapp.com/send?text=${encodeURIComponent(
                   readingPost.title + ' - Read here: ' + window.location.href
                 )}`}
                 target="_blank"
                 rel="noreferrer"
               >
-                WhatsApp
+                <svg viewBox="0 0 24 24">
+                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.65 20.52 16.03 20.44 15.9C20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10 11.53 8.5 11.27 7.9C11.03 7.31 10.77 7.39 10.58 7.38C10.41 7.38 10.21 7.37 10 7.37C9.79 7.37 9.53 7.04 9.53 7.04Z" />
+                </svg>
               </a>
+
+              {/* X / Twitter Icon */}
               <a
-                className="share-btn"
+                className="share-icon-btn x-twitter"
+                title="Share on X"
                 href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(
                   readingPost.title
                 )}&url=${encodeURIComponent(window.location.href)}`}
                 target="_blank"
                 rel="noreferrer"
               >
-                Twitter/X
+                <svg viewBox="0 0 24 24">
+                  <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
+                </svg>
               </a>
+
+              {/* LinkedIn Icon */}
               <a
-                className="share-btn"
+                className="share-icon-btn linkedin"
+                title="Share on LinkedIn"
                 href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(
                   window.location.href
                 )}`}
                 target="_blank"
                 rel="noreferrer"
               >
-                LinkedIn
+                <svg viewBox="0 0 24 24">
+                  <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.25c-.95 0-1.72.78-1.72 1.73s.77 1.73 1.72 1.73 1.73-.78 1.73-1.73-.78-1.73-1.73-1.73Z" />
+                </svg>
               </a>
+
+              {/* Copy Link Button */}
               <button
                 type="button"
-                className="share-btn"
+                className="share-btn-copy"
+                title="Copy Clean Link"
                 onClick={() => handleCopyLink(readingPost)}
               >
-                🔗 Copy Link
+                <svg viewBox="0 0 24 24">
+                  <path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z" />
+                </svg>
+                <span>Copy Link</span>
               </button>
             </div>
 
-            <div className="article-content">{readingPost.content}</div>
+            {/* Content with Code Blocks & Copy Button */}
+            <div className="article-content">
+              {readingPost.content.split('```').map((chunk, index) => {
+                if (index % 2 === 1) {
+                  return (
+                    <div key={index} className="code-block-container">
+                      <button
+                        type="button"
+                        className="btn-copy-code"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigator.clipboard.writeText(chunk.trim());
+                          showAlert('Copied!', 'Code copied to clipboard.');
+                        }}
+                      >
+                        📋 Copy
+                      </button>
+                      <pre className="language-javascript">
+                        <code>{chunk.trim()}</code>
+                      </pre>
+                    </div>
+                  );
+                }
+                return <p key={index}>{chunk}</p>;
+              })}
+            </div>
 
             {/* Engagement Bar with Bookmark, Like Action & Author Controls */}
             <div className="engagement-bar">
@@ -922,8 +1013,8 @@ export default function App() {
                 </span>
               </div>
 
-              {/* Input Card */}
-              <form onSubmit={handleAddComment} className="comment-input-card">
+              {/* Input Card with Custom Pop-up Validation (noValidate prevents browser tooltip) */}
+              <form onSubmit={handleAddComment} noValidate className="comment-input-card">
                 {replyParentId && (
                   <div className="reply-badge">
                     <span>↳ Replying to a comment...</span>
@@ -933,6 +1024,7 @@ export default function App() {
                   </div>
                 )}
                 <textarea
+                  ref={commentInputRef}
                   placeholder={
                     currentUser
                       ? `What are your thoughts, ${currentUser.name}?`
@@ -940,7 +1032,6 @@ export default function App() {
                   }
                   value={commentText}
                   onChange={(e) => setCommentText(e.target.value)}
-                  required
                 />
                 <div className="comment-input-footer">
                   <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
@@ -1009,10 +1100,7 @@ export default function App() {
                                 <button
                                   type="button"
                                   className="btn-reply-link"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setReplyParentId(parent._id);
-                                  }}
+                                  onClick={(e) => handleReplyClick(parent._id, e)}
                                 >
                                   Reply
                                 </button>
@@ -1073,6 +1161,14 @@ export default function App() {
                                     </div>
 
                                     <div className="comment-controls">
+                                      <button
+                                        type="button"
+                                        className="btn-reply-link"
+                                        onClick={(e) => handleReplyClick(parent._id, e)}
+                                      >
+                                        Reply
+                                      </button>
+
                                       {isReplyAuthor && (
                                         <button
                                           type="button"
@@ -1110,7 +1206,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 9. Create / Edit Article Modal */}
+      {/* 9. Create / Edit Article Modal with Cloudinary Direct Upload */}
       {isModalOpen && (
         <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -1154,7 +1250,7 @@ export default function App() {
               </datalist>
 
               <div className="file-upload-box">
-                <label>Select Cover Image:</label>
+                <label>Select Cover Image (Auto-Uploaded to Cloudinary):</label>
                 <input
                   type="file"
                   accept="image/*"

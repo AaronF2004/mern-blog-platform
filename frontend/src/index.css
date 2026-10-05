@@ -410,7 +410,9 @@ body {
   transition: width 0.1s ease-out;
 }
 
-/* Social Share Toolbar */
+/* =========================================
+   SOCIAL SHARE ICON TOOLBAR
+========================================= */
 .social-share-row {
   display: flex;
   align-items: center;
@@ -425,34 +427,120 @@ body {
   font-size: 0.85rem;
   font-weight: 700;
   color: var(--text-muted);
-  margin-right: 0.25rem;
+  margin-right: 0.4rem;
 }
 
-.share-btn {
+.share-icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  color: #475569;
+}
+
+.share-icon-btn svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+  transition: transform 0.2s;
+}
+
+.share-icon-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+}
+
+/* WhatsApp Brand Hover */
+.share-icon-btn.whatsapp:hover {
+  background: #25d366;
+  border-color: #25d366;
+  color: #ffffff;
+}
+
+/* X / Twitter Brand Hover */
+.share-icon-btn.x-twitter:hover {
+  background: #0f1419;
+  border-color: #0f1419;
+  color: #ffffff;
+}
+
+/* LinkedIn Brand Hover */
+.share-icon-btn.linkedin:hover {
+  background: #0a66c2;
+  border-color: #0a66c2;
+  color: #ffffff;
+}
+
+/* Copy Link Pill Button */
+.share-btn-copy {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  padding: 0.35rem 0.75rem;
-  border-radius: 6px;
+  padding: 0.45rem 0.85rem;
+  border-radius: 8px;
   font-size: 0.8rem;
   font-weight: 600;
-  text-decoration: none;
   cursor: pointer;
   border: 1px solid var(--border);
-  background: #fff;
+  background: #ffffff;
   color: #334155;
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
+  margin-left: 0.25rem;
 }
 
-.share-btn:hover {
-  background: #f8fafc;
+.share-btn-copy:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
   transform: translateY(-1px);
 }
 
-.share-btn svg {
-  width: 14px;
-  height: 14px;
+.share-btn-copy svg {
+  width: 15px;
+  height: 15px;
   fill: currentColor;
+}
+
+/* Code Snippet Container & Copy Button */
+.code-block-container {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 1rem 0;
+}
+
+.code-block-container pre {
+  margin: 0 !important;
+  border-radius: 8px;
+  padding: 1.25rem 1rem !important;
+  font-size: 0.9rem;
+}
+
+.btn-copy-code {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: #f8fafc;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  z-index: 10;
+}
+
+.btn-copy-code:hover {
+  background: rgba(255, 255, 255, 0.3);
+  color: #fff;
 }
 
 /* Modals & Overlays */
@@ -724,8 +812,12 @@ body {
   font-size: 1.05rem;
   line-height: 1.8;
   color: #334155;
-  white-space: pre-wrap;
   margin: 1.5rem 0;
+}
+
+.article-content p {
+  margin-bottom: 1rem;
+  white-space: pre-wrap;
 }
 
 .engagement-bar {

@@ -1,11 +1,32 @@
 const express = require('express');
 const router = express.Router();
+const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const Post = require('../models/Post');
 const User = require('../models/User');
+const upload = require('../config/cloudinary');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'devpress_super_secret_jwt_key_2026';
+
+// ==========================================
+// 1. CLOUDINARY IMAGE UPLOAD ENDPOINT
+// ==========================================
+router.post('/upload', upload.single('image'), (req, res) => {
+  try {
+    if (!req.file || !req.file.path) {
+      return res.status(400).json({ error: 'Image upload failed. Please try again.' });
+    }
+    return res.json({ imageUrl: req.file.path });
+  } catch (err) {
+    console.error('Cloudinary upload error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ==========================================
+// 2. AUTHENTICATION ENDPOINTS
+// ==========================================
 
 // Register
 router.post('/auth/register', async (req, res) => {
@@ -99,11 +120,32 @@ router.post('/auth/login', async (req, res) => {
   }
 });
 
+// ==========================================
+// 3. POSTS CRUD & SLUG LOOKUP
+// ==========================================
+
 // Get all posts
 router.get('/', async (req, res) => {
   try {
     const posts = await Post.find().sort({ createdAt: -1 });
     res.json(posts);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get single post by either slug OR ObjectId
+router.get('/:identifier', async (req, res) => {
+  try {
+    const { identifier } = req.params;
+    const isObjectId = mongoose.Types.ObjectId.isValid(identifier);
+
+    const post = isObjectId
+      ? await Post.findById(identifier)
+      : await Post.findOne({ slug: identifier });
+
+    if (!post) return res.status(404).json({ message: 'Article not found.' });
+    res.json(post);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -178,7 +220,9 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// Like / Unlike Toggle Handler
+// ==========================================
+// 4. ATOMIC LIKE/UNLIKE
+// ==========================================
 const handleLikeToggle = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -204,7 +248,11 @@ const handleLikeToggle = async (req, res) => {
 router.patch('/:id/like', handleLikeToggle);
 router.patch('/:id/clap', handleLikeToggle);
 
-// Add comment or reply
+// ==========================================
+// 5. COMMENTS & CASCADING REPLIES DELETE
+// ==========================================
+
+// Add Comment or Reply
 router.post('/:id/comments', async (req, res) => {
   const { author, authorId, content, parentId } = req.body;
   try {
@@ -225,7 +273,7 @@ router.post('/:id/comments', async (req, res) => {
   }
 });
 
-// Cascade Delete Comment (Deletes comment & all attached replies)
+// Cascading Delete Comment (Deletes comment & all attached replies)
 router.delete('/:postId/comments/:commentId', async (req, res) => {
   const { postId, commentId } = req.params;
   const { requesterId, requesterName, requesterRole } = req.query;

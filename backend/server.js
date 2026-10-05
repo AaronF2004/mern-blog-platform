@@ -1,6 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const postRoutes = require('./routes/postRoutes');
@@ -8,52 +9,44 @@ const postRoutes = require('./routes/postRoutes');
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// 1. CORS Configuration (Handles Vercel frontend, local dev, and pre-flight requests)
-app.use(
-  cors({
-    origin: '*',
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
-  })
-);
+// Enable CORS
+app.use(cors());
 
-// 2. Body Parser Middleware (High payload limit to handle image uploads)
-app.use(express.json({ limit: '15mb' }));
-app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+// Parse JSON bodies
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 3. Root Health Check Route
-app.get('/', (req, res) => {
-  res.status(200).json({
-    status: 'online',
-    message: 'DevPress MERN Backend API is running smoothly.',
-    timestamp: new Date().toISOString()
-  });
+// 1. Strict Limiter for Login/Register routes (Max 15 attempts every 15 minutes)
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 15,
+  message: { message: 'Too many authentication attempts. Please try again after 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false
 });
 
-// 4. API Routes
+// 2. General Limiter for API endpoints (Max 300 requests every 15 minutes per IP)
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  message: { error: 'Too many requests. Please slow down.' }
+});
+
+// Apply rate limiters
+app.use('/api/posts/auth', authLimiter);
+app.use('/api', generalLimiter);
+
+// Routes
 app.use('/api/posts', postRoutes);
 
-// 5. Global 404 Route Handler
-app.use((req, res) => {
-  res.status(404).json({ message: `Route ${req.originalUrl} not found on this server.` });
+// Health check route
+app.get('/', (req, res) => {
+  res.send('DevPress Backend API is running smoothly.');
 });
 
-// 6. Global Error Handling Middleware
-app.use((err, req, res, next) => {
-  console.error('Unhandled Server Error:', err);
-  res.status(500).json({ message: 'Internal Server Error', error: err.message });
-});
-
-// 7. MongoDB Atlas Connection & Server Startup
-const MONGO_URI = process.env.MONGO_URI;
-
-if (!MONGO_URI) {
-  console.error('CRITICAL ERROR: MONGO_URI is not defined in environment variables!');
-  process.exit(1);
-}
-
+// Connect to MongoDB
 mongoose
-  .connect(MONGO_URI)
+  .connect(process.env.MONGO_URI)
   .then(() => {
     console.log('MongoDB Atlas Connected Successfully!');
     app.listen(PORT, () => {
@@ -61,6 +54,5 @@ mongoose
     });
   })
   .catch((err) => {
-    console.error('CRITICAL: MongoDB connection error:', err);
-    process.exit(1);
+    console.error('MongoDB Connection Error:', err.message);
   });
