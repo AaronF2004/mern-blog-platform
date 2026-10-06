@@ -10,7 +10,9 @@ const upload = require('../config/cloudinary');
 const JWT_SECRET = process.env.JWT_SECRET || 'devpress_super_secret_jwt_key_2026';
 const ADMIN_SECRET = (process.env.ADMIN_SECRET || 'DEVPRESS_ADMIN_2026').trim().toLowerCase();
 
-// 1. Authorization Middleware
+// ==========================================
+// 1. AUTHORIZATION MIDDLEWARE
+// ==========================================
 const verifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -27,7 +29,9 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-// 2. Resilient Cloudinary Upload with Multer Error Handling
+// ==========================================
+// 2. RESILIENT CLOUDINARY UPLOAD ENDPOINT
+// ==========================================
 router.post('/upload', (req, res) => {
   upload.single('image')(req, res, (err) => {
     if (err) {
@@ -45,10 +49,14 @@ router.post('/upload', (req, res) => {
   });
 });
 
-// 3. Authentication & Admin Claim
+// ==========================================
+// 3. AUTHENTICATION & ADMIN GATEWAY
+// ==========================================
+
+// Standard Public Registration
 router.post('/auth/register', async (req, res) => {
   try {
-    const { name, email, password, adminSecret } = req.body;
+    const { name, email, password } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ message: 'All fields are required.' });
@@ -67,14 +75,11 @@ router.post('/auth/register', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    const isSecretValid = adminSecret && adminSecret.trim().toLowerCase() === ADMIN_SECRET;
-    const role = isSecretValid ? 'admin' : 'author';
-
     const user = await User.create({
       name: name.trim(),
       email: normalizedEmail,
       password: hashedPassword,
-      role
+      role: 'author'
     });
 
     const token = jwt.sign(
@@ -99,6 +104,7 @@ router.post('/auth/register', async (req, res) => {
   }
 });
 
+// Standard Public Login
 router.post('/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -140,6 +146,7 @@ router.post('/auth/login', async (req, res) => {
   }
 });
 
+// Hidden Gateway: Verify Master Secret to Grant Administrative Role
 router.post('/auth/claim-admin', verifyToken, async (req, res) => {
   try {
     const { adminSecret } = req.body;
@@ -178,7 +185,11 @@ router.post('/auth/claim-admin', verifyToken, async (req, res) => {
   }
 });
 
-// 4. Posts CRUD
+// ==========================================
+// 4. POSTS CRUD & VIEWS
+// ==========================================
+
+// Get All Posts
 router.get('/', async (req, res) => {
   try {
     const posts = await Post.find().sort({ createdAt: -1 }).lean();
@@ -192,6 +203,7 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Increment View Counter
 router.patch('/:id/view', async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -207,6 +219,7 @@ router.patch('/:id/view', async (req, res) => {
   }
 });
 
+// Get Single Post by Slug or ID
 router.get('/:identifier', async (req, res) => {
   try {
     const { identifier } = req.params;
@@ -293,7 +306,9 @@ router.delete('/:id', verifyToken, async (req, res) => {
   }
 });
 
-// 5. Likes
+// ==========================================
+// 5. ATOMIC LIKE/UNLIKE
+// ==========================================
 const handleLikeToggle = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -319,7 +334,11 @@ const handleLikeToggle = async (req, res) => {
 router.patch('/:id/like', handleLikeToggle);
 router.patch('/:id/clap', handleLikeToggle);
 
-// 6. Comments
+// ==========================================
+// 6. COMMENTS & CASCADING REPLIES DELETE
+// ==========================================
+
+// Add Comment
 router.post('/:id/comments', async (req, res) => {
   const { author, authorId, content, parentId } = req.body;
   try {
@@ -340,7 +359,7 @@ router.post('/:id/comments', async (req, res) => {
   }
 });
 
-// Delete Comment (Author of comment, author of post, OR Admin)
+// Delete Comment (Author of Comment, Author of Post, OR Admin)
 router.delete('/:postId/comments/:commentId', verifyToken, async (req, res) => {
   const { postId, commentId } = req.params;
 
@@ -361,6 +380,7 @@ router.delete('/:postId/comments/:commentId', verifyToken, async (req, res) => {
       return res.status(403).json({ message: 'Forbidden: Insufficient permissions to delete this comment.' });
     }
 
+    // Recursively collect target comment and any child replies
     const idsToDelete = new Set([commentId.toString()]);
     let added = true;
     while (added) {

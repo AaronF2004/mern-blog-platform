@@ -52,11 +52,11 @@ export default function App() {
   const [isLoginView, setIsLoginView] = useState(true);
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
-  const [authForm, setAuthForm] = useState({ name: '', email: '', password: '', adminSecret: '' });
+  const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
 
-  // Quick Admin Upgrade Dialog
-  const [isClaimModalOpen, setIsClaimModalOpen] = useState(false);
-  const [claimSecret, setClaimSecret] = useState('');
+  // Hidden Administrative Gateway (Accessible via Ctrl+Shift+A or #admin-portal)
+  const [isAdminPortalOpen, setIsAdminPortalOpen] = useState(false);
+  const [adminPortalKey, setAdminPortalKey] = useState('');
 
   // Liked Posts Tracker
   const [likedPosts, setLikedPosts] = useState(() => {
@@ -138,8 +138,43 @@ export default function App() {
     fetchPosts();
   }, []);
 
+  // Listen for Admin Gateway shortcut: Ctrl + Shift + A or Hash #admin-portal
   useEffect(() => {
-    if (readingPost || isModalOpen || deleteTargetId || deleteCommentTargetId || centerAlert || isAuthModalOpen || isClaimModalOpen) {
+    const handleKeyDown = (e) => {
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        setIsAdminPortalOpen(true);
+      }
+    };
+
+    const handleHashChange = () => {
+      if (window.location.hash === '#admin-portal') {
+        setIsAdminPortalOpen(true);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('hashchange', handleHashChange);
+    if (window.location.hash === '#admin-portal') {
+      setIsAdminPortalOpen(true);
+    }
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('hashchange', handleHashChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      readingPost ||
+      isModalOpen ||
+      deleteTargetId ||
+      deleteCommentTargetId ||
+      centerAlert ||
+      isAuthModalOpen ||
+      isAdminPortalOpen
+    ) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = 'unset';
@@ -147,7 +182,15 @@ export default function App() {
     return () => {
       document.body.style.overflow = 'unset';
     };
-  }, [readingPost, isModalOpen, deleteTargetId, deleteCommentTargetId, centerAlert, isAuthModalOpen, isClaimModalOpen]);
+  }, [
+    readingPost,
+    isModalOpen,
+    deleteTargetId,
+    deleteCommentTargetId,
+    centerAlert,
+    isAuthModalOpen,
+    isAdminPortalOpen
+  ]);
 
   useEffect(() => {
     if (readingPost) {
@@ -235,7 +278,7 @@ export default function App() {
   const toggleAuthMode = () => {
     setIsLoginView(!isLoginView);
     setAuthError('');
-    setAuthForm({ name: '', email: '', password: '', adminSecret: '' });
+    setAuthForm({ name: '', email: '', password: '' });
   };
 
   const handleAuthSubmit = async (e) => {
@@ -249,8 +292,7 @@ export default function App() {
       : {
           name: authForm.name,
           email: authForm.email,
-          password: authForm.password,
-          adminSecret: authForm.adminSecret?.trim()
+          password: authForm.password
         };
 
     try {
@@ -260,10 +302,10 @@ export default function App() {
         localStorage.setItem('devpress_user', JSON.stringify(res.data.user));
         setCurrentUser(res.data.user);
         setIsAuthModalOpen(false);
-        setAuthForm({ name: '', email: '', password: '', adminSecret: '' });
+        setAuthForm({ name: '', email: '', password: '' });
         showAlert(
           isLoginView ? 'Welcome Back!' : 'Account Created!',
-          `Signed in as ${res.data.user.name} (${res.data.user.role === 'admin' ? 'ADMIN' : 'Author'}).`,
+          `Signed in as ${res.data.user.name}.`,
           'success'
         );
       }
@@ -274,25 +316,36 @@ export default function App() {
     }
   };
 
-  const handleClaimAdmin = async (e) => {
+  // Secure Admin Gateway Submission
+  const handleAdminGatewayVerify = async (e) => {
     e.preventDefault();
-    if (!claimSecret.trim()) return;
+    if (!adminPortalKey.trim()) return;
+
+    if (!currentUser) {
+      showAlert('Login Required', 'Please sign in to your author account first before claiming Admin privileges.', 'danger');
+      setIsAdminPortalOpen(false);
+      setIsAuthModalOpen(true);
+      return;
+    }
 
     try {
       const res = await axios.post(
         `${API_URL}/auth/claim-admin`,
-        { adminSecret: claimSecret.trim() },
+        { adminSecret: adminPortalKey.trim() },
         { headers: getAuthHeader() }
       );
 
       localStorage.setItem('devpress_token', res.data.token);
       localStorage.setItem('devpress_user', JSON.stringify(res.data.user));
       setCurrentUser(res.data.user);
-      setIsClaimModalOpen(false);
-      setClaimSecret('');
-      showAlert('Admin Access Granted!', 'Your account has been granted full Admin privileges.', 'success');
+      setIsAdminPortalOpen(false);
+      setAdminPortalKey('');
+      if (window.location.hash === '#admin-portal') {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+      showAlert('Admin Granted', 'Administrative access authorized successfully.', 'success');
     } catch (err) {
-      showAlert('Access Denied', err.response?.data?.message || 'Incorrect Admin Secret Key.', 'danger');
+      showAlert('Unauthorized', err.response?.data?.message || 'Invalid administrative credentials.', 'danger');
     }
   };
 
@@ -319,7 +372,6 @@ export default function App() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  // Robust File Upload with Cloudinary + Local Base64 Fallback
   const uploadImageFile = async (file) => {
     if (!file) return;
 
@@ -349,17 +401,11 @@ export default function App() {
         return;
       }
     } catch (err) {
-      console.warn('Cloudinary upload endpoint unavailable/failed. Falling back to local data URL:', err);
-
-      // Graceful local fallback so the user can always attach images without disruption
+      console.warn('Cloudinary upload fallback activated:', err);
       const reader = new FileReader();
       reader.onloadend = () => {
         setFormData((prev) => ({ ...prev, imageUrl: reader.result }));
-        showAlert(
-          'Image Attached',
-          'Cover image preview loaded locally (Cloudinary API requires verification on server).',
-          'success'
-        );
+        showAlert('Image Attached', 'Cover image attached successfully.', 'success');
       };
       reader.readAsDataURL(file);
     }
@@ -706,7 +752,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 2. Top Navbar */}
+      {/* 2. Top Navbar (Clean, Real-World Public UI) */}
       <header className="navbar">
         <div className="nav-container">
           <div className="logo" onClick={() => setSelectedCategory('All')}>
@@ -717,21 +763,11 @@ export default function App() {
               <>
                 <span
                   className="user-badge"
-                  style={currentUser.role === 'admin' ? { background: '#fee2e2', color: '#dc2626', borderColor: '#fca5a5', cursor: 'default' } : { cursor: 'pointer' }}
-                  onClick={() => currentUser.role !== 'admin' && setIsClaimModalOpen(true)}
-                  title={currentUser.role === 'admin' ? "Platform Administrator" : "Click to claim Admin access"}
+                  style={currentUser.role === 'admin' ? { background: '#fee2e2', color: '#dc2626', borderColor: '#fca5a5' } : {}}
+                  title={currentUser.role === 'admin' ? "Platform Administrator" : "Author Account"}
                 >
                   {currentUser.role === 'admin' ? '🛡️ Admin' : `👤 ${currentUser.name}`}
                 </span>
-                {currentUser.role !== 'admin' && (
-                  <button
-                    className="btn-sm"
-                    style={{ background: '#fef3c7', borderColor: '#fde68a', color: '#b45309' }}
-                    onClick={() => setIsClaimModalOpen(true)}
-                  >
-                    Get Admin
-                  </button>
-                )}
                 <button className="btn-sm" onClick={handleLogout}>
                   Logout
                 </button>
@@ -908,7 +944,7 @@ export default function App() {
                               title={isAdmin ? "Delete as Admin" : "Delete article"}
                               onClick={(e) => promptDelete(post, e)}
                             >
-                              {isAdmin && post.authorId !== currentUser.id ? '🛡️️ Admin Delete' : 'Delete'}
+                              {isAdmin && post.authorId !== currentUser.id ? '🛡️ Admin Delete' : 'Delete'}
                             </button>
                           </>
                         )}
@@ -1027,7 +1063,7 @@ export default function App() {
             </h1>
             
             <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '1rem' }}>
-              By <strong>{readingPost.author}</strong> • {readingPost.readTime || 1} min read • 👁 {readingPost.views || 0} views •{' '}
+              By <strong>{readingPost.author}</strong> • {readingPost.readTime || 1} min read • 👁️ {readingPost.views || 0} views •{' '}
               {new Date(readingPost.createdAt || Date.now()).toLocaleDateString('en-US', {
                 month: 'long',
                 day: 'numeric',
@@ -1048,7 +1084,7 @@ export default function App() {
                 rel="noreferrer"
               >
                 <svg viewBox="0 0 24 24">
-                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.03 20.44 15.9C20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10 11.53 8.5 11.27 7.9C11.03 7.31 10.77 7.39 10.58 7.38C10.41 7.38 10.21 7.37 10 7.37C9.79 7.37 9.53 7.04 9.53 7.04Z" />
+                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.65 20.52 16.03 20.44 15.9C20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10 11.53 8.5 11.27 7.9C11.03 7.31 10.77 7.39 10.58 7.38C10.41 7.38 10.21 7.37 10 7.37C9.79 7.37 9.53 7.04 9.53 7.04Z" />
                 </svg>
               </a>
 
@@ -1076,7 +1112,7 @@ export default function App() {
                 rel="noreferrer"
               >
                 <svg viewBox="0 0 24 24">
-                  <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.25c-.95 0-1.72.78-1.72 1.73s.77 1.73 1.72 1.73 1.73-.78 1.73-1.73-.78-1.73-1.73Z" />
+                  <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.25c-.95 0-1.72.78-1.72 1.73s.77 1.73 1.72 1.73 1.73-.78 1.73-1.73-.78-1.73-1.73-1.73Z" />
                 </svg>
               </a>
 
@@ -1439,7 +1475,7 @@ export default function App() {
                       style={{ display: 'none' }}
                       onChange={handleFileInputChange}
                     />
-                    <div className="dropzone-icon">☁️</div>
+                    <div className="dropzone-icon">☁️️</div>
                     <div className="dropzone-title">
                       Drop an image here, or <span>Browse</span>
                     </div>
@@ -1499,7 +1535,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 10. Authentication Modal */}
+      {/* 10. Authentication Modal (CLEAN REAL-WORLD FORM: No Admin Keys Exposed) */}
       {isAuthModalOpen && (
         <div className="modal-overlay" onClick={() => setIsAuthModalOpen(false)}>
           <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
@@ -1553,15 +1589,6 @@ export default function App() {
                 onChange={handleAuthInputChange}
                 required
               />
-              {!isLoginView && (
-                <input
-                  name="adminSecret"
-                  type="text"
-                  placeholder="Admin Secret Key (Enter DEVPRESS_ADMIN_2026 for Admin role)"
-                  value={authForm.adminSecret}
-                  onChange={handleAuthInputChange}
-                />
-              )}
               <button
                 type="submit"
                 className="btn-primary"
@@ -1592,21 +1619,21 @@ export default function App() {
         </div>
       )}
 
-      {/* 11. Instant Admin Promotion Dialog */}
-      {isClaimModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsClaimModalOpen(false)}>
+      {/* 11. Hidden Administrative Gateway Modal */}
+      {isAdminPortalOpen && (
+        <div className="modal-overlay" onClick={() => setIsAdminPortalOpen(false)}>
           <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-icon" style={{ background: '#dbeafe', color: '#2563eb' }}>🛡️️</div>
-            <h3>Claim Admin Privileges</h3>
-            <p>
-              Enter the admin secret key to upgrade your current account (<strong>{currentUser?.name}</strong>) to platform administrator.
+            <div className="confirm-icon" style={{ background: '#fef2f2', color: '#dc2626' }}>🛡️</div>
+            <h3>System Admin Gateway</h3>
+            <p style={{ fontSize: '0.85rem' }}>
+              Restricted internal console. Authenticate to grant administrative privileges to <strong>{currentUser?.name || 'current session'}</strong>.
             </p>
-            <form onSubmit={handleClaimAdmin} className="modal-form">
+            <form onSubmit={handleAdminGatewayVerify} className="modal-form">
               <input
                 type="password"
-                placeholder="Admin Secret (DEVPRESS_ADMIN_2026)"
-                value={claimSecret}
-                onChange={(e) => setClaimSecret(e.target.value)}
+                placeholder="Master Secret Key"
+                value={adminPortalKey}
+                onChange={(e) => setAdminPortalKey(e.target.value)}
                 required
                 autoFocus
               />
@@ -1614,12 +1641,12 @@ export default function App() {
                 <button
                   type="button"
                   className="btn-sm"
-                  onClick={() => setIsClaimModalOpen(false)}
+                  onClick={() => setIsAdminPortalOpen(false)}
                 >
-                  Cancel
+                  Close
                 </button>
-                <button type="submit" className="btn-primary">
-                  Verify & Activate Admin
+                <button type="submit" className="btn-primary" style={{ background: '#dc2626' }}>
+                  Authorize Admin
                 </button>
               </div>
             </form>
