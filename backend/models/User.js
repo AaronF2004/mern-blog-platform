@@ -4,24 +4,24 @@ const userSchema = new mongoose.Schema(
   {
     name: {
       type: String,
-      required: [true, 'Please provide a name'],
+      required: true,
       trim: true
     },
     email: {
       type: String,
-      required: [true, 'Please provide an email'],
+      required: true,
       unique: true,
       lowercase: true,
       trim: true
     },
     password: {
       type: String,
-      required: [true, 'Please provide a password'],
+      required: true,
       minlength: 6
     },
     bio: {
       type: String,
-      default: 'Writer & reader on DevPress.'
+      default: ''
     },
     role: {
       type: String,

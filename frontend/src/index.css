@@ -24,9 +24,7 @@ body {
   overflow-x: hidden;
 }
 
-/* =========================================
-   1. NAVBAR (RESPONSIVE)
-========================================= */
+/* 1. NAVBAR */
 .navbar {
   background: #ffffff;
   border-bottom: 1px solid var(--border);
@@ -114,9 +112,7 @@ body {
   background: #e2e8f0;
 }
 
-/* =========================================
-   2. HERO & CONTROLS
-========================================= */
+/* 2. HERO & CONTROLS */
 .hero {
   max-width: 1200px;
   margin: 1.5rem auto 0.75rem;
@@ -178,9 +174,7 @@ body {
   flex-shrink: 0;
 }
 
-/* =========================================
-   3. CATEGORY CHIPS (HORIZONTAL SCROLL ON MOBILE)
-========================================= */
+/* 3. CATEGORY CHIPS */
 .category-chips-wrapper {
   max-width: 1200px;
   margin: 0.75rem auto;
@@ -231,9 +225,7 @@ body {
   color: #fff;
 }
 
-/* =========================================
-   4. LOADING ANIMATION
-========================================= */
+/* 4. LOADING STATE */
 .loading-container {
   display: flex;
   flex-direction: column;
@@ -257,9 +249,7 @@ body {
   to { transform: rotate(360deg); }
 }
 
-/* =========================================
-   5. POSTS GRID & CARDS
-========================================= */
+/* 5. POSTS GRID & CARDS */
 .posts-grid {
   max-width: 1200px;
   margin: 1.5rem auto 3rem;
@@ -504,29 +494,7 @@ body {
   background: #fef2f2;
 }
 
-/* =========================================
-   6. READING VIEW & MODALS (RESPONSIVE)
-========================================= */
-.reading-progress-track {
-  position: sticky;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: #e2e8f0;
-  z-index: 50;
-  margin: -1.5rem -1.5rem 1.25rem -1.5rem;
-  border-top-left-radius: var(--radius);
-  border-top-right-radius: var(--radius);
-  overflow: hidden;
-}
-
-.reading-progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #3b82f6, #6366f1);
-  transition: width 0.1s ease-out;
-}
-
+/* 6. MODALS & NEW HERO MEDIA UPLOADER */
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -588,6 +556,133 @@ body {
   border-color: var(--accent);
 }
 
+/* =========================================
+   NEW DRAG & DROP MEDIA DASHBOARD
+========================================= */
+.media-uploader-box {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.media-uploader-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.65rem;
+}
+
+.media-label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.btn-magic-img {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-magic-img:hover {
+  background: #dbeafe;
+}
+
+.dropzone-container {
+  border: 2px dashed #cbd5e1;
+  border-radius: 10px;
+  padding: 1.1rem;
+  text-align: center;
+  background: #ffffff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.dropzone-container:hover {
+  border-color: var(--accent);
+  background: #f0f7ff;
+}
+
+.dropzone-icon {
+  font-size: 1.75rem;
+  margin-bottom: 0.25rem;
+}
+
+.dropzone-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.dropzone-title span {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.dropzone-subtitle {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.media-preview-container {
+  position: relative;
+  width: 100%;
+  height: 160px;
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.media-preview-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.media-preview-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(4px);
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+}
+
+.btn-remove-media {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+  color: #ef4444;
+  padding: 0.25rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.btn-remove-media:hover {
+  background: #ef4444;
+  color: #fff;
+}
+
+/* 7. FORMATTING TOOLBAR & COMMENTS */
 .editor-toolbar {
   display: flex;
   gap: 0.35rem;
@@ -615,43 +710,32 @@ body {
   min-height: 150px;
 }
 
-.file-upload-box {
-  margin-bottom: 0.9rem;
-}
-
-.file-upload-box label {
-  display: block;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--text-muted);
-  margin-bottom: 0.35rem;
-}
-
-.file-upload-box input[type="file"] {
-  border: 1px dashed var(--border);
-  padding: 0.55rem;
-  background: #f8fafc;
-  cursor: pointer;
-}
-
-.image-preview {
-  width: 100%;
-  height: 130px;
-  object-fit: cover;
-  border-radius: 8px;
-  margin-bottom: 0.9rem;
-  border: 1px solid var(--border);
-}
-
 .modal-footer {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
 }
 
-/* =========================================
-   7. SOCIAL SHARE & COMMENTS
-========================================= */
+.reading-progress-track {
+  position: sticky;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: #e2e8f0;
+  z-index: 50;
+  margin: -1.5rem -1.5rem 1.25rem -1.5rem;
+  border-top-left-radius: var(--radius);
+  border-top-right-radius: var(--radius);
+  overflow: hidden;
+}
+
+.reading-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #6366f1);
+  transition: width 0.1s ease-out;
+}
+
 .social-share-row {
   display: flex;
   align-items: center;
@@ -975,9 +1059,7 @@ body {
   word-break: break-word;
 }
 
-/* =========================================
-   8. POPUPS & ALERTS
-========================================= */
+/* 8. POPUPS */
 .confirm-box {
   background: #fff;
   border-radius: var(--radius);
@@ -1091,9 +1173,6 @@ body {
   100% { opacity: 1; transform: scale(1) translateY(0); }
 }
 
-/* =========================================
-   9. MOBILE & TABLET MEDIA QUERIES
-========================================= */
 @media (max-width: 768px) {
   .hero {
     flex-direction: column;

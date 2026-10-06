@@ -8,24 +8,47 @@ const User = require('../models/User');
 const upload = require('../config/cloudinary');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'devpress_super_secret_jwt_key_2026';
+const ADMIN_SECRET = (process.env.ADMIN_SECRET || 'DEVPRESS_ADMIN_2026').trim().toLowerCase();
 
-// 1. Cloudinary upload endpoint
-router.post('/upload', upload.single('image'), (req, res) => {
-  try {
-    if (!req.file || !req.file.path) {
-      return res.status(400).json({ error: 'Image upload failed. Please try again.' });
-    }
-    return res.json({ imageUrl: req.file.path });
-  } catch (err) {
-    console.error('Cloudinary upload error:', err);
-    return res.status(500).json({ error: err.message });
+// 1. Authorization Middleware
+const verifyToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Authorization token required.' });
   }
+
+  const token = authHeader.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded; // { id, name, email, role }
+    next();
+  } catch (err) {
+    return res.status(403).json({ error: 'Invalid or expired token.' });
+  }
+};
+
+// 2. Resilient Cloudinary Upload with Multer Error Handling
+router.post('/upload', (req, res) => {
+  upload.single('image')(req, res, (err) => {
+    if (err) {
+      console.error('Cloudinary/Multer Upload Error:', err);
+      return res.status(500).json({
+        error: err.message || 'Cloudinary credentials missing or upload rejected.'
+      });
+    }
+
+    if (!req.file || !req.file.path) {
+      return res.status(400).json({ error: 'No image file was received.' });
+    }
+
+    return res.json({ imageUrl: req.file.path });
+  });
 });
 
-// 2. Authentication
+// 3. Authentication & Admin Claim
 router.post('/auth/register', async (req, res) => {
   try {
-    const { name, email, password } = req.body;
+    const { name, email, password, adminSecret } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ message: 'All fields are required.' });
@@ -44,14 +67,18 @@ router.post('/auth/register', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
+    const isSecretValid = adminSecret && adminSecret.trim().toLowerCase() === ADMIN_SECRET;
+    const role = isSecretValid ? 'admin' : 'author';
+
     const user = await User.create({
       name: name.trim(),
       email: normalizedEmail,
-      password: hashedPassword
+      password: hashedPassword,
+      role
     });
 
     const token = jwt.sign(
-      { id: user._id, name: user.name, email: user.email },
+      { id: user._id, name: user.name, email: user.email, role: user.role },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -92,7 +119,7 @@ router.post('/auth/login', async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: user._id, name: user.name, email: user.email },
+      { id: user._id, name: user.name, email: user.email, role: user.role || 'author' },
       JWT_SECRET,
       { expiresIn: '7d' }
     );
@@ -104,7 +131,7 @@ router.post('/auth/login', async (req, res) => {
         name: user.name,
         email: user.email,
         bio: user.bio,
-        role: user.role
+        role: user.role || 'author'
       }
     });
   } catch (err) {
@@ -113,17 +140,73 @@ router.post('/auth/login', async (req, res) => {
   }
 });
 
-// 3. Posts CRUD
+router.post('/auth/claim-admin', verifyToken, async (req, res) => {
+  try {
+    const { adminSecret } = req.body;
+    if (!adminSecret || adminSecret.trim().toLowerCase() !== ADMIN_SECRET) {
+      return res.status(400).json({ message: 'Incorrect Admin Secret Key.' });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { role: 'admin' },
+      { new: true }
+    );
+
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    const newToken = jwt.sign(
+      { id: user._id, name: user.name, email: user.email, role: 'admin' },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    return res.json({
+      message: 'Account successfully upgraded to Admin!',
+      token: newToken,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        bio: user.bio,
+        role: 'admin'
+      }
+    });
+  } catch (err) {
+    console.error('Claim Admin Error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 4. Posts CRUD
 router.get('/', async (req, res) => {
   try {
-    const posts = await Post.find().sort({ createdAt: -1 });
-    res.json(posts);
+    const posts = await Post.find().sort({ createdAt: -1 }).lean();
+    const sanitizedPosts = posts.map((p) => ({
+      ...p,
+      views: typeof p.views === 'number' ? p.views : 0
+    }));
+    res.json(sanitizedPosts);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Get single post by slug or ID
+router.patch('/:id/view', async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
+    post.views = (typeof post.views === 'number' ? post.views : 0) + 1;
+    await post.save();
+
+    return res.json({ views: post.views, postId: post._id });
+  } catch (err) {
+    console.error('View increment error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/:identifier', async (req, res) => {
   try {
     const { identifier } = req.params;
@@ -140,10 +223,10 @@ router.get('/:identifier', async (req, res) => {
   }
 });
 
-// Create post
-router.post('/', async (req, res) => {
+// Create Post
+router.post('/', verifyToken, async (req, res) => {
   try {
-    const { title, author, authorId, category, imageUrl, content, status } = req.body;
+    const { title, category, imageUrl, content, status } = req.body;
 
     if (!title || !content) {
       return res.status(400).json({ error: 'Title and content are required.' });
@@ -151,8 +234,8 @@ router.post('/', async (req, res) => {
 
     const newPost = new Post({
       title: title.trim(),
-      author: author ? author.trim() : 'Anonymous',
-      authorId: authorId || null,
+      author: req.user.name,
+      authorId: req.user.id,
       category: category ? category.trim() : 'Information Technology',
       imageUrl: imageUrl ? imageUrl.trim() : '',
       content: content.trim(),
@@ -170,33 +253,17 @@ router.post('/', async (req, res) => {
   }
 });
 
-// Increment post view count
-router.patch('/:id/view', async (req, res) => {
-  try {
-    const updated = await Post.findByIdAndUpdate(
-      req.params.id,
-      { $inc: { views: 1 } },
-      { new: true }
-    );
-    if (!updated) return res.status(404).json({ error: 'Post not found' });
-    return res.json({ views: updated.views });
-  } catch (err) {
-    console.error('View increment error:', err);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// Update post
-router.put('/:id', async (req, res) => {
+// Update Post (Author OR Admin)
+router.put('/:id', verifyToken, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ error: 'Post not found' });
 
-    const requesterId = req.body.requesterId;
-    const requesterRole = req.body.requesterRole;
+    const isAuthor = post.authorId && post.authorId.toString() === req.user.id;
+    const isAdmin = req.user.role === 'admin';
 
-    if (post.authorId && post.authorId.toString() !== requesterId && requesterRole !== 'admin') {
-      return res.status(403).json({ error: 'You do not have permission to edit this article.' });
+    if (!isAuthor && !isAdmin) {
+      return res.status(403).json({ error: 'Forbidden: Only the author or an admin can edit this article.' });
     }
 
     const updated = await Post.findByIdAndUpdate(req.params.id, req.body, { new: true });
@@ -206,27 +273,27 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Delete post
-router.delete('/:id', async (req, res) => {
+// Delete Post (Author OR Admin)
+router.delete('/:id', verifyToken, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ error: 'Post not found' });
 
-    const requesterId = req.query.requesterId;
-    const requesterRole = req.query.requesterRole;
+    const isAuthor = post.authorId && post.authorId.toString() === req.user.id;
+    const isAdmin = req.user.role === 'admin';
 
-    if (post.authorId && post.authorId.toString() !== requesterId && requesterRole !== 'admin') {
-      return res.status(403).json({ error: 'You do not have permission to delete this article.' });
+    if (!isAuthor && !isAdmin) {
+      return res.status(403).json({ error: 'Forbidden: Only the author or an admin can delete this article.' });
     }
 
     await Post.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Post deleted successfully.' });
+    res.json({ message: `Post deleted successfully by ${isAdmin ? 'Admin' : 'Author'}.` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// 4. Like/Clap handler
+// 5. Likes
 const handleLikeToggle = async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -252,7 +319,7 @@ const handleLikeToggle = async (req, res) => {
 router.patch('/:id/like', handleLikeToggle);
 router.patch('/:id/clap', handleLikeToggle);
 
-// 5. Comments
+// 6. Comments
 router.post('/:id/comments', async (req, res) => {
   const { author, authorId, content, parentId } = req.body;
   try {
@@ -273,10 +340,9 @@ router.post('/:id/comments', async (req, res) => {
   }
 });
 
-// Cascading Comment Deletion
-router.delete('/:postId/comments/:commentId', async (req, res) => {
+// Delete Comment (Author of comment, author of post, OR Admin)
+router.delete('/:postId/comments/:commentId', verifyToken, async (req, res) => {
   const { postId, commentId } = req.params;
-  const { requesterId, requesterName, requesterRole } = req.query;
 
   try {
     const post = await Post.findById(postId);
@@ -287,14 +353,12 @@ router.delete('/:postId/comments/:commentId', async (req, res) => {
       return res.status(404).json({ message: 'Comment not found.' });
     }
 
-    const isOwner =
-      requesterRole === 'admin' ||
-      (post.authorId && post.authorId.toString() === requesterId) ||
-      (targetComment.authorId && targetComment.authorId.toString() === requesterId) ||
-      (targetComment.author && targetComment.author.trim().toLowerCase() === requesterName?.trim().toLowerCase());
+    const isCommentAuthor = targetComment.authorId && targetComment.authorId.toString() === req.user.id;
+    const isPostAuthor = post.authorId && post.authorId.toString() === req.user.id;
+    const isAdmin = req.user.role === 'admin';
 
-    if (!isOwner) {
-      return res.status(403).json({ message: 'You can only delete your own comments.' });
+    if (!isCommentAuthor && !isPostAuthor && !isAdmin) {
+      return res.status(403).json({ message: 'Forbidden: Insufficient permissions to delete this comment.' });
     }
 
     const idsToDelete = new Set([commentId.toString()]);

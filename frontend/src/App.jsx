@@ -22,10 +22,7 @@ const PRESET_CATEGORIES = [
 ];
 
 export default function App() {
-  const [posts, setPosts] = useState(() => {
-    const saved = localStorage.getItem('mern_cached_posts');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [search, setSearch] = useState('');
@@ -38,6 +35,9 @@ export default function App() {
   const [deleteTargetId, setDeleteTargetId] = useState(null);
   const [deleteCommentTargetId, setDeleteCommentTargetId] = useState(null);
   const [centerAlert, setCenterAlert] = useState(null);
+
+  // Drag and Drop State
+  const [isDragging, setIsDragging] = useState(false);
 
   // Authentication State
   const [currentUser, setCurrentUser] = useState(() => {
@@ -52,7 +52,11 @@ export default function App() {
   const [isLoginView, setIsLoginView] = useState(true);
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
-  const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
+  const [authForm, setAuthForm] = useState({ name: '', email: '', password: '', adminSecret: '' });
+
+  // Quick Admin Upgrade Dialog
+  const [isClaimModalOpen, setIsClaimModalOpen] = useState(false);
+  const [claimSecret, setClaimSecret] = useState('');
 
   // Liked Posts Tracker
   const [likedPosts, setLikedPosts] = useState(() => {
@@ -102,16 +106,29 @@ export default function App() {
     setCenterAlert(null);
   };
 
+  const getAuthHeader = () => {
+    const token = localStorage.getItem('devpress_token');
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
   const fetchPosts = async () => {
     try {
       setLoading(true);
       const res = await axios.get(API_URL);
       if (Array.isArray(res.data)) {
-        setPosts(res.data);
-        localStorage.setItem('mern_cached_posts', JSON.stringify(res.data));
+        const sanitized = res.data.map((p) => ({
+          ...p,
+          views: typeof p.views === 'number' ? p.views : 0
+        }));
+        setPosts(sanitized);
+        localStorage.setItem('mern_cached_posts', JSON.stringify(sanitized));
       }
     } catch (err) {
-      console.warn('Backend unavailable, showing cached posts.');
+      console.warn('Backend unavailable, fallback to cache if available.');
+      const cached = localStorage.getItem('mern_cached_posts');
+      if (cached) {
+        setPosts(JSON.parse(cached));
+      }
     } finally {
       setLoading(false);
     }
@@ -121,9 +138,8 @@ export default function App() {
     fetchPosts();
   }, []);
 
-  // Lock background scroll when overlays are active
   useEffect(() => {
-    if (readingPost || isModalOpen || deleteTargetId || deleteCommentTargetId || centerAlert || isAuthModalOpen) {
+    if (readingPost || isModalOpen || deleteTargetId || deleteCommentTargetId || centerAlert || isAuthModalOpen || isClaimModalOpen) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = 'unset';
@@ -131,9 +147,8 @@ export default function App() {
     return () => {
       document.body.style.overflow = 'unset';
     };
-  }, [readingPost, isModalOpen, deleteTargetId, deleteCommentTargetId, centerAlert, isAuthModalOpen]);
+  }, [readingPost, isModalOpen, deleteTargetId, deleteCommentTargetId, centerAlert, isAuthModalOpen, isClaimModalOpen]);
 
-  // Syntax highlighting trigger for code snippets
   useEffect(() => {
     if (readingPost) {
       setTimeout(() => {
@@ -142,7 +157,6 @@ export default function App() {
     }
   }, [readingPost]);
 
-  // Reading progress tracker
   const handleArticleScroll = () => {
     if (articleModalRef.current) {
       const { scrollTop, scrollHeight, clientHeight } = articleModalRef.current;
@@ -154,29 +168,42 @@ export default function App() {
     }
   };
 
-  // Open Reading Modal & Increment View Count
   const openReadingModal = async (post) => {
     setReadingPost(post);
     setScrollProgress(0);
 
-    const updatedPosts = posts.map((p) =>
-      p._id === post._id ? { ...p, views: (p.views || 0) + 1 } : p
-    );
-    setPosts(updatedPosts);
-    localStorage.setItem('mern_cached_posts', JSON.stringify(updatedPosts));
+    const initialCurrentViews = typeof post.views === 'number' ? post.views : 0;
+    const newViewsCount = initialCurrentViews + 1;
+
+    setReadingPost((prev) => (prev ? { ...prev, views: newViewsCount } : null));
+
+    setPosts((prevPosts) => {
+      const updated = prevPosts.map((p) =>
+        p._id === post._id ? { ...p, views: newViewsCount } : p
+      );
+      localStorage.setItem('mern_cached_posts', JSON.stringify(updated));
+      return updated;
+    });
 
     try {
       const res = await axios.patch(`${API_URL}/${post._id}/view`);
       if (res.data && typeof res.data.views === 'number') {
-        setReadingPost((prev) => (prev ? { ...prev, views: res.data.views } : prev));
+        const confirmedViews = res.data.views;
+        setReadingPost((prev) => (prev ? { ...prev, views: confirmedViews } : null));
+        setPosts((prevPosts) => {
+          const synced = prevPosts.map((p) =>
+            p._id === post._id ? { ...p, views: confirmedViews } : p
+          );
+          localStorage.setItem('mern_cached_posts', JSON.stringify(synced));
+          return synced;
+        });
       }
     } catch (err) {
-      console.error('Failed to increment view counter:', err);
+      console.error('Failed to sync view counter:', err);
     }
   };
 
-  // Check if current user is owner of the article
-  const isOwner = (post) => {
+  const canModifyPost = (post) => {
     if (!currentUser) return false;
     if (currentUser.role === 'admin') return true;
     if (post.authorId && (post.authorId === currentUser.id || post.authorId === currentUser._id)) {
@@ -185,7 +212,6 @@ export default function App() {
     return post.author?.toLowerCase().trim() === currentUser.name?.toLowerCase().trim();
   };
 
-  // Bookmark Toggle Handler
   const toggleBookmark = (postId, e) => {
     if (e) e.stopPropagation();
     const isBookmarked = bookmarkedPostIds.includes(postId);
@@ -201,7 +227,6 @@ export default function App() {
     );
   };
 
-  // Auth Handlers
   const handleAuthInputChange = (e) => {
     setAuthForm({ ...authForm, [e.target.name]: e.target.value });
     setAuthError('');
@@ -210,7 +235,7 @@ export default function App() {
   const toggleAuthMode = () => {
     setIsLoginView(!isLoginView);
     setAuthError('');
-    setAuthForm({ name: '', email: '', password: '' });
+    setAuthForm({ name: '', email: '', password: '', adminSecret: '' });
   };
 
   const handleAuthSubmit = async (e) => {
@@ -221,7 +246,12 @@ export default function App() {
     const endpoint = isLoginView ? `${API_URL}/auth/login` : `${API_URL}/auth/register`;
     const payload = isLoginView
       ? { email: authForm.email, password: authForm.password }
-      : { name: authForm.name, email: authForm.email, password: authForm.password };
+      : {
+          name: authForm.name,
+          email: authForm.email,
+          password: authForm.password,
+          adminSecret: authForm.adminSecret?.trim()
+        };
 
     try {
       const res = await axios.post(endpoint, payload);
@@ -230,10 +260,10 @@ export default function App() {
         localStorage.setItem('devpress_user', JSON.stringify(res.data.user));
         setCurrentUser(res.data.user);
         setIsAuthModalOpen(false);
-        setAuthForm({ name: '', email: '', password: '' });
+        setAuthForm({ name: '', email: '', password: '', adminSecret: '' });
         showAlert(
           isLoginView ? 'Welcome Back!' : 'Account Created!',
-          `Signed in as ${res.data.user.name}.`,
+          `Signed in as ${res.data.user.name} (${res.data.user.role === 'admin' ? 'ADMIN' : 'Author'}).`,
           'success'
         );
       }
@@ -244,6 +274,28 @@ export default function App() {
     }
   };
 
+  const handleClaimAdmin = async (e) => {
+    e.preventDefault();
+    if (!claimSecret.trim()) return;
+
+    try {
+      const res = await axios.post(
+        `${API_URL}/auth/claim-admin`,
+        { adminSecret: claimSecret.trim() },
+        { headers: getAuthHeader() }
+      );
+
+      localStorage.setItem('devpress_token', res.data.token);
+      localStorage.setItem('devpress_user', JSON.stringify(res.data.user));
+      setCurrentUser(res.data.user);
+      setIsClaimModalOpen(false);
+      setClaimSecret('');
+      showAlert('Admin Access Granted!', 'Your account has been granted full Admin privileges.', 'success');
+    } catch (err) {
+      showAlert('Access Denied', err.response?.data?.message || 'Incorrect Admin Secret Key.', 'danger');
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem('devpress_token');
     localStorage.removeItem('devpress_user');
@@ -251,7 +303,6 @@ export default function App() {
     showAlert('Signed Out', 'You have been logged out.', 'danger');
   };
 
-  // Toolbar Formatting Helper
   const insertFormatting = (tagStart, tagEnd = '') => {
     const textarea = textareaRef.current;
     if (!textarea) return;
@@ -268,32 +319,101 @@ export default function App() {
     setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  // Cloudinary Direct Image Upload Handler
-  const handleImageFileChange = async (e) => {
-    const file = e.target.files[0];
+  // Robust File Upload with Cloudinary + Local Base64 Fallback
+  const uploadImageFile = async (file) => {
     if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      showAlert('Invalid File', 'Please select an image file (JPG, PNG, WEBP).', 'danger');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      showAlert('File Too Large', 'Please select an image smaller than 5MB.', 'danger');
+      return;
+    }
+
+    showAlert('Uploading...', 'Processing cover image...', 'success');
 
     const uploadData = new FormData();
     uploadData.append('image', file);
 
     try {
-      showAlert('Uploading...', 'Uploading cover image to Cloudinary...', 'success');
       const res = await axios.post(`${API_URL}/upload`, uploadData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
-      setFormData((prev) => ({ ...prev, imageUrl: res.data.imageUrl }));
-      showAlert('Image Uploaded', 'Cover image uploaded and optimized successfully!', 'success');
+
+      if (res.data && res.data.imageUrl) {
+        setFormData((prev) => ({ ...prev, imageUrl: res.data.imageUrl }));
+        showAlert('Image Uploaded', 'Cover image uploaded to Cloudinary successfully!', 'success');
+        return;
+      }
     } catch (err) {
-      console.error('Image upload failed:', err);
-      showAlert('Upload Failed', 'Could not upload image. Please check file size.', 'danger');
+      console.warn('Cloudinary upload endpoint unavailable/failed. Falling back to local data URL:', err);
+
+      // Graceful local fallback so the user can always attach images without disruption
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFormData((prev) => ({ ...prev, imageUrl: reader.result }));
+        showAlert(
+          'Image Attached',
+          'Cover image preview loaded locally (Cloudinary API requires verification on server).',
+          'success'
+        );
+      };
+      reader.readAsDataURL(file);
     }
   };
 
+  const handleFileInputChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      uploadImageFile(file);
+    }
+    e.target.value = '';
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      uploadImageFile(file);
+    }
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleGenerateMagicBanner = () => {
+    const topic = formData.category.trim() || formData.title.trim() || 'technology';
+    const cleanTopic = encodeURIComponent(topic.split(' ')[0]);
+    const randomSeed = Math.floor(Math.random() * 9999);
+    const magicUrl = `https://picsum.photos/seed/${cleanTopic}-${randomSeed}/1200/600`;
+
+    setFormData((prev) => ({ ...prev, imageUrl: magicUrl }));
+    showAlert('Banner Generated', 'Topic-matched high-res cover assigned!', 'success');
+  };
+
   const openCreateModal = () => {
+    if (!currentUser) {
+      setIsAuthModalOpen(true);
+      return;
+    }
     setEditId(null);
     setFormData({
       title: '',
-      author: currentUser ? currentUser.name : '',
+      author: currentUser.name,
       category: '',
       imageUrl: '',
       content: '',
@@ -304,8 +424,8 @@ export default function App() {
 
   const handleEdit = (post, e) => {
     e.stopPropagation();
-    if (!isOwner(post)) {
-      showAlert('Access Denied', 'Only the author of this post can edit it.', 'danger');
+    if (!canModifyPost(post)) {
+      showAlert('Access Denied', 'Only the author or an admin can edit this article.', 'danger');
       return;
     }
     setEditId(post._id);
@@ -323,27 +443,20 @@ export default function App() {
   const handleSubmit = async (targetStatus = 'published', e) => {
     if (e) e.preventDefault();
     const finalCategory = formData.category.trim() || 'Information Technology';
-    const authorName = currentUser?.name || formData.author?.trim() || 'Anonymous';
-    const authorId = currentUser?.id || currentUser?._id || null;
 
     const payload = {
       title: formData.title.trim(),
-      author: authorName,
-      authorId: authorId,
       category: finalCategory,
       imageUrl: formData.imageUrl.trim(),
       content: formData.content.trim(),
-      status: targetStatus,
-      likes: 0,
-      claps: 0,
-      views: 0,
-      requesterId: authorId,
-      requesterRole: currentUser?.role || 'author'
+      status: targetStatus
     };
 
     try {
       if (editId) {
-        const res = await axios.put(`${API_URL}/${editId}`, payload);
+        const res = await axios.put(`${API_URL}/${editId}`, payload, {
+          headers: getAuthHeader()
+        });
         const updatedPost = res.data;
 
         setPosts((prevPosts) => {
@@ -355,7 +468,9 @@ export default function App() {
         setIsModalOpen(false);
         showAlert('Article Updated', 'Your changes have been saved.', 'success');
       } else {
-        const res = await axios.post(API_URL, payload);
+        const res = await axios.post(API_URL, payload, {
+          headers: getAuthHeader()
+        });
         const createdPost = res.data;
 
         setPosts((prevPosts) => {
@@ -364,19 +479,7 @@ export default function App() {
           return updated;
         });
 
-        setFormData({
-          title: '',
-          author: currentUser ? currentUser.name : '',
-          category: '',
-          imageUrl: '',
-          content: '',
-          status: 'published'
-        });
         setIsModalOpen(false);
-
-        setSelectedCategory('All');
-        setSearch('');
-
         showAlert(
           targetStatus === 'draft' ? 'Draft Saved' : 'Article Published',
           targetStatus === 'draft'
@@ -397,8 +500,8 @@ export default function App() {
 
   const promptDelete = (post, e) => {
     e.stopPropagation();
-    if (!isOwner(post)) {
-      showAlert('Access Denied', 'Only the author of this post can delete it.', 'danger');
+    if (!canModifyPost(post)) {
+      showAlert('Access Denied', 'Only the author or an admin can delete this article.', 'danger');
       return;
     }
     setDeleteTargetId(post._id);
@@ -408,11 +511,8 @@ export default function App() {
     if (e) e.stopPropagation();
     if (!deleteTargetId) return;
     try {
-      const requesterId = currentUser?.id || currentUser?._id;
-      const requesterRole = currentUser?.role;
-
       await axios.delete(`${API_URL}/${deleteTargetId}`, {
-        params: { requesterId, requesterRole }
+        headers: getAuthHeader()
       });
 
       const updated = posts.filter((p) => p._id !== deleteTargetId);
@@ -420,7 +520,7 @@ export default function App() {
       localStorage.setItem('mern_cached_posts', JSON.stringify(updated));
       if (readingPost && readingPost._id === deleteTargetId) setReadingPost(null);
       setDeleteTargetId(null);
-      showAlert('Article Deleted', 'The article has been permanently removed.', 'danger');
+      showAlert('Article Deleted', 'The article has been permanently removed by authorized user.', 'danger');
     } catch (err) {
       console.error('Error deleting post:', err);
       showAlert('Delete Failed', err.response?.data?.error || 'Could not delete the post.', 'danger');
@@ -428,7 +528,6 @@ export default function App() {
     }
   };
 
-  // Like Toggle Handler
   const handleLikeToggle = async (postId, e) => {
     e.stopPropagation();
     const isCurrentlyLiked = likedPosts.includes(postId);
@@ -481,7 +580,6 @@ export default function App() {
     }
   };
 
-  // Reply Jump Helper
   const handleReplyClick = (parentId, e) => {
     if (e) e.stopPropagation();
     setReplyParentId(parentId);
@@ -492,19 +590,12 @@ export default function App() {
     }
   };
 
-  // Add Comment with Standard Popup
   const handleAddComment = async (e) => {
     e.preventDefault();
 
     if (!commentText || !commentText.trim()) {
-      showAlert(
-        'Empty Comment',
-        'Please enter some text before posting your comment.',
-        'danger'
-      );
-      if (commentInputRef.current) {
-        commentInputRef.current.focus();
-      }
+      showAlert('Empty Comment', 'Please enter some text before posting your comment.', 'danger');
+      if (commentInputRef.current) commentInputRef.current.focus();
       return;
     }
 
@@ -531,26 +622,20 @@ export default function App() {
     }
   };
 
-  // Open Comment Delete Modal
   const promptDeleteComment = (commentId, e) => {
     if (e) e.stopPropagation();
     setDeleteCommentTargetId(commentId);
   };
 
-  // Cascade Delete Comment Execution
   const confirmDeleteComment = async (e) => {
     if (e) e.stopPropagation();
     if (!deleteCommentTargetId || !readingPost) return;
 
     try {
-      const requesterId = currentUser?.id || currentUser?._id || '';
-      const requesterName = currentUser?.name || '';
-      const requesterRole = currentUser?.role || 'author';
-
       const res = await axios.delete(
         `${API_URL}/${readingPost._id}/comments/${deleteCommentTargetId}`,
         {
-          params: { requesterId, requesterName, requesterRole }
+          headers: getAuthHeader()
         }
       );
 
@@ -562,7 +647,7 @@ export default function App() {
       });
 
       setDeleteCommentTargetId(null);
-      showAlert('Comment Deleted', 'The comment and all connected replies were removed.');
+      showAlert('Comment Deleted', 'The comment and its discussion thread were removed.');
     } catch (err) {
       console.error('Delete comment failed:', err);
       setDeleteCommentTargetId(null);
@@ -570,7 +655,6 @@ export default function App() {
     }
   };
 
-  // Copy Article Link
   const handleCopyLink = (post) => {
     const slugOrId = post.slug || post._id;
     const url = `${window.location.origin}/#${slugOrId}`;
@@ -578,10 +662,9 @@ export default function App() {
     showAlert('Link Copied', 'Clean article link copied to clipboard!');
   };
 
-  // Filter and Sort Posts
   const filteredPosts = posts
     .filter((post) => {
-      if (post.status === 'draft' && !isOwner(post)) {
+      if (post.status === 'draft' && !canModifyPost(post)) {
         return false;
       }
 
@@ -600,12 +683,8 @@ export default function App() {
       return matchesSearch && matchesCategory;
     })
     .sort((a, b) => {
-      if (sortBy === 'mostViewed') {
-        return (b.views || 0) - (a.views || 0);
-      }
-      if (sortBy === 'oldest') {
-        return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
-      }
+      if (sortBy === 'mostViewed') return (b.views || 0) - (a.views || 0);
+      if (sortBy === 'oldest') return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
       return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
     });
 
@@ -636,7 +715,23 @@ export default function App() {
           <div className="auth-actions">
             {currentUser ? (
               <>
-                <span className="user-badge" title={currentUser.name}>👤 {currentUser.name}</span>
+                <span
+                  className="user-badge"
+                  style={currentUser.role === 'admin' ? { background: '#fee2e2', color: '#dc2626', borderColor: '#fca5a5', cursor: 'default' } : { cursor: 'pointer' }}
+                  onClick={() => currentUser.role !== 'admin' && setIsClaimModalOpen(true)}
+                  title={currentUser.role === 'admin' ? "Platform Administrator" : "Click to claim Admin access"}
+                >
+                  {currentUser.role === 'admin' ? '🛡️ Admin' : `👤 ${currentUser.name}`}
+                </span>
+                {currentUser.role !== 'admin' && (
+                  <button
+                    className="btn-sm"
+                    style={{ background: '#fef3c7', borderColor: '#fde68a', color: '#b45309' }}
+                    onClick={() => setIsClaimModalOpen(true)}
+                  >
+                    Get Admin
+                  </button>
+                )}
                 <button className="btn-sm" onClick={handleLogout}>
                   Logout
                 </button>
@@ -687,7 +782,7 @@ export default function App() {
         </div>
       </section>
 
-      {/* 4. Category Filter Chips (Horizontal Scrollable on Mobile) */}
+      {/* 4. Category Filter Chips */}
       <div className="category-chips-wrapper">
         <div className="category-chips">
           <button
@@ -725,7 +820,8 @@ export default function App() {
             </p>
           ) : (
             filteredPosts.map((post, idx) => {
-              const userIsAuthor = isOwner(post);
+              const isAdmin = currentUser?.role === 'admin';
+              const hasModAccess = canModifyPost(post);
               const isLiked = likedPosts.includes(post._id);
               const isSaved = bookmarkedPostIds.includes(post._id);
               const displayLikes = typeof post.likes === 'number' ? post.likes : (post.claps || 0);
@@ -747,7 +843,6 @@ export default function App() {
                       className="card-img"
                     />
 
-                    {/* Eye Icon with View Count Badge */}
                     <div className="views-badge" title={`${post.views || 0} views`}>
                       <svg viewBox="0 0 24 24">
                         <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
@@ -799,7 +894,7 @@ export default function App() {
                           <span>{displayLikes}</span>
                         </button>
 
-                        {userIsAuthor && (
+                        {hasModAccess && (
                           <>
                             <button
                               className="btn-sm"
@@ -810,10 +905,10 @@ export default function App() {
                             </button>
                             <button
                               className="btn-sm delete"
-                              title="Delete article"
+                              title={isAdmin ? "Delete as Admin" : "Delete article"}
                               onClick={(e) => promptDelete(post, e)}
                             >
-                              Delete
+                              {isAdmin && post.authorId !== currentUser.id ? '🛡️️ Admin Delete' : 'Delete'}
                             </button>
                           </>
                         )}
@@ -833,7 +928,11 @@ export default function App() {
           <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
             <div className="confirm-icon">!</div>
             <h3>Delete Article?</h3>
-            <p>Are you sure you want to permanently delete your article? This cannot be undone.</p>
+            <p>
+              {currentUser?.role === 'admin'
+                ? 'As an Admin, this will permanently remove this article from the entire platform.'
+                : 'Are you sure you want to permanently delete your article? This cannot be undone.'}
+            </p>
             <div className="confirm-actions">
               <button
                 type="button"
@@ -928,15 +1027,14 @@ export default function App() {
             </h1>
             
             <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '1rem' }}>
-              By <strong>{readingPost.author}</strong> • {readingPost.readTime || 1} min read • 👁️ {readingPost.views || 0} views •{' '}
+              By <strong>{readingPost.author}</strong> • {readingPost.readTime || 1} min read • 👁 {readingPost.views || 0} views •{' '}
               {new Date(readingPost.createdAt || Date.now()).toLocaleDateString('en-US', {
-                month: 'short',
+                month: 'long',
                 day: 'numeric',
                 year: 'numeric'
               })}
             </p>
 
-            {/* Social Sharing Row with Official SVG Icons */}
             <div className="social-share-row">
               <span className="share-label">Share:</span>
               
@@ -950,7 +1048,7 @@ export default function App() {
                 rel="noreferrer"
               >
                 <svg viewBox="0 0 24 24">
-                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.65 20.52 16.03 20.44 15.9C20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10 11.53 8.5 11.27 7.9C11.03 7.31 10.77 7.39 10.58 7.38C10.41 7.38 10.21 7.37 10 7.37C9.79 7.37 9.53 7.04 9.53 7.04Z" />
+                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.03 20.44 15.9C20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10 11.53 8.5 11.27 7.9C11.03 7.31 10.77 7.39 10.58 7.38C10.41 7.38 10.21 7.37 10 7.37C9.79 7.37 9.53 7.04 9.53 7.04Z" />
                 </svg>
               </a>
 
@@ -978,7 +1076,7 @@ export default function App() {
                 rel="noreferrer"
               >
                 <svg viewBox="0 0 24 24">
-                  <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.25c-.95 0-1.72.78-1.72 1.73s.77 1.73 1.72 1.73 1.73-.78 1.73-1.73-.78-1.73-1.73-1.73Z" />
+                  <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.25c-.95 0-1.72.78-1.72 1.73s.77 1.73 1.72 1.73 1.73-.78 1.73-1.73-.78-1.73-1.73Z" />
                 </svg>
               </a>
 
@@ -995,7 +1093,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Content with Code Blocks & Copy Button */}
             <div className="article-content">
               {readingPost.content.split('```').map((chunk, index) => {
                 if (index % 2 === 1) {
@@ -1022,7 +1119,6 @@ export default function App() {
               })}
             </div>
 
-            {/* Engagement Bar with Bookmark, Like Action & Author Controls */}
             <div className="engagement-bar">
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                 <button
@@ -1050,13 +1146,13 @@ export default function App() {
                 </button>
               </div>
 
-              {isOwner(readingPost) && (
+              {canModifyPost(readingPost) && (
                 <div style={{ display: 'flex', gap: '0.4rem' }}>
                   <button className="btn-sm" onClick={(e) => handleEdit(readingPost, e)}>
                     Edit
                   </button>
                   <button className="btn-sm delete" onClick={(e) => promptDelete(readingPost, e)}>
-                    Delete
+                    {currentUser?.role === 'admin' && readingPost.authorId !== currentUser.id ? '🛡️ Admin Delete' : 'Delete'}
                   </button>
                 </div>
               )}
@@ -1126,7 +1222,7 @@ export default function App() {
                         (currentUser.name?.toLowerCase().trim() === parent.author?.toLowerCase().trim() ||
                           (parent.authorId && (parent.authorId === currentUser.id || parent.authorId === currentUser._id)) ||
                           currentUser.role === 'admin' ||
-                          isOwner(readingPost));
+                          canModifyPost(readingPost));
 
                       return (
                         <div key={parent._id} className="comment-node">
@@ -1165,7 +1261,7 @@ export default function App() {
                                   <button
                                     type="button"
                                     className="btn-delete-comment"
-                                    title="Delete comment"
+                                    title={currentUser?.role === 'admin' ? "Delete as Admin" : "Delete comment"}
                                     onClick={(e) => promptDeleteComment(parent._id, e)}
                                   >
                                     <svg viewBox="0 0 24 24">
@@ -1187,7 +1283,7 @@ export default function App() {
                                 (currentUser.name?.toLowerCase().trim() === reply.author?.toLowerCase().trim() ||
                                   (reply.authorId && (reply.authorId === currentUser.id || reply.authorId === currentUser._id)) ||
                                   currentUser.role === 'admin' ||
-                                  isOwner(readingPost));
+                                  canModifyPost(readingPost));
 
                               return (
                                 <div key={reply._id} className="creative-comment is-reply">
@@ -1228,7 +1324,7 @@ export default function App() {
                                         <button
                                           type="button"
                                           className="btn-delete-comment"
-                                          title="Delete reply"
+                                          title={currentUser?.role === 'admin' ? "Delete as Admin" : "Delete reply"}
                                           onClick={(e) => promptDeleteComment(reply._id, e)}
                                         >
                                           <svg viewBox="0 0 24 24">
@@ -1278,15 +1374,6 @@ export default function App() {
                 onChange={handleChange}
                 required
               />
-              {!currentUser && (
-                <input
-                  name="author"
-                  placeholder="Author name..."
-                  value={formData.author}
-                  onChange={handleChange}
-                  required
-                />
-              )}
 
               <input
                 name="category"
@@ -1302,22 +1389,66 @@ export default function App() {
                 ))}
               </datalist>
 
-              <div className="file-upload-box">
-                <label>Cover Image (Cloudinary Auto-Upload):</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageFileChange}
-                />
-              </div>
+              {/* Native Label Dropzone File Browser */}
+              <div className="media-uploader-box">
+                <div className="media-uploader-header">
+                  <span className="media-label">Article Cover Visual</span>
+                  <button
+                    type="button"
+                    className="btn-magic-img"
+                    onClick={handleGenerateMagicBanner}
+                    title="Generate a high-res cover matched to your title and category"
+                  >
+                    ✨ Auto-Generate Cover
+                  </button>
+                </div>
 
-              {formData.imageUrl && (
-                <img
-                  src={formData.imageUrl}
-                  alt="Selected Preview"
-                  className="image-preview"
-                />
-              )}
+                {formData.imageUrl ? (
+                  <div className="media-preview-container">
+                    <img
+                      src={formData.imageUrl}
+                      alt="Article Banner Preview"
+                      className="media-preview-img"
+                    />
+                    <span className="media-preview-badge">Cover Ready</span>
+                    <button
+                      type="button"
+                      className="btn-remove-media"
+                      onClick={() => setFormData((prev) => ({ ...prev, imageUrl: '' }))}
+                    >
+                      ✕ Remove
+                    </button>
+                  </div>
+                ) : (
+                  <label
+                    htmlFor="article-cover-input"
+                    className="dropzone-container"
+                    style={{
+                      display: 'block',
+                      borderColor: isDragging ? 'var(--accent)' : '#cbd5e1',
+                      background: isDragging ? '#eff6ff' : '#ffffff'
+                    }}
+                    onDrop={handleDrop}
+                    onDragOver={handleDragOver}
+                    onDragLeave={handleDragLeave}
+                  >
+                    <input
+                      id="article-cover-input"
+                      type="file"
+                      accept="image/png, image/jpeg, image/jpg, image/webp"
+                      style={{ display: 'none' }}
+                      onChange={handleFileInputChange}
+                    />
+                    <div className="dropzone-icon">☁️</div>
+                    <div className="dropzone-title">
+                      Drop an image here, or <span>Browse</span>
+                    </div>
+                    <div className="dropzone-subtitle">
+                      Supports JPG, PNG, WEBP (Auto-optimized on Cloudinary)
+                    </div>
+                  </label>
+                )}
+              </div>
 
               <div className="editor-toolbar">
                 <button type="button" className="toolbar-btn" onClick={() => insertFormatting('**', '**')}>
@@ -1422,6 +1553,15 @@ export default function App() {
                 onChange={handleAuthInputChange}
                 required
               />
+              {!isLoginView && (
+                <input
+                  name="adminSecret"
+                  type="text"
+                  placeholder="Admin Secret Key (Enter DEVPRESS_ADMIN_2026 for Admin role)"
+                  value={authForm.adminSecret}
+                  onChange={handleAuthInputChange}
+                />
+              )}
               <button
                 type="submit"
                 className="btn-primary"
@@ -1448,6 +1588,41 @@ export default function App() {
                 {isLoginView ? 'Register here' : 'Sign in here'}
               </button>
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* 11. Instant Admin Promotion Dialog */}
+      {isClaimModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsClaimModalOpen(false)}>
+          <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-icon" style={{ background: '#dbeafe', color: '#2563eb' }}>🛡️️</div>
+            <h3>Claim Admin Privileges</h3>
+            <p>
+              Enter the admin secret key to upgrade your current account (<strong>{currentUser?.name}</strong>) to platform administrator.
+            </p>
+            <form onSubmit={handleClaimAdmin} className="modal-form">
+              <input
+                type="password"
+                placeholder="Admin Secret (DEVPRESS_ADMIN_2026)"
+                value={claimSecret}
+                onChange={(e) => setClaimSecret(e.target.value)}
+                required
+                autoFocus
+              />
+              <div className="confirm-actions">
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() => setIsClaimModalOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary">
+                  Verify & Activate Admin
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
