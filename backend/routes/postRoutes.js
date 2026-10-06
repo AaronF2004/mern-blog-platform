@@ -203,7 +203,26 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Atomically Increment View Counter (Supports both PATCH and PUT)
+// Fix Existing Posts: Reassign all "Anonymous" posts to the authenticated author
+router.patch('/claim-all-anonymous', verifyToken, async (req, res) => {
+  try {
+    const authorName = req.user.name || 'Author';
+    const authorId = req.user.id;
+
+    await Post.updateMany(
+      { $or: [{ author: 'Anonymous' }, { author: null }, { author: '' }] },
+      { $set: { author: authorName, authorId: authorId } }
+    );
+
+    const updatedPosts = await Post.find().sort({ createdAt: -1 }).lean();
+    return res.json(updatedPosts);
+  } catch (err) {
+    console.error('Claim anonymous error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Atomically Increment View Counter
 const handleViewIncrement = async (req, res) => {
   try {
     const { id } = req.params;
@@ -212,7 +231,6 @@ const handleViewIncrement = async (req, res) => {
       return res.status(400).json({ error: 'Invalid post ID' });
     }
 
-    // $inc atomically increments views; if the field does not exist, MongoDB initializes it to 1
     const updated = await Post.findByIdAndUpdate(
       id,
       { $inc: { views: 1 } },
@@ -253,15 +271,20 @@ router.get('/:identifier', async (req, res) => {
 // Create Post
 router.post('/', verifyToken, async (req, res) => {
   try {
-    const { title, category, imageUrl, content, status } = req.body;
+    const { title, category, imageUrl, content, status, author } = req.body;
 
     if (!title || !content) {
       return res.status(400).json({ error: 'Title and content are required.' });
     }
 
+    // Resolves author name strictly from token or client payload
+    const resolvedAuthor = (author && author.trim() && author !== 'Anonymous')
+      ? author.trim()
+      : (req.user?.name || 'Author');
+
     const newPost = new Post({
       title: title.trim(),
-      author: req.user.name,
+      author: resolvedAuthor,
       authorId: req.user.id,
       category: category ? category.trim() : 'Information Technology',
       imageUrl: imageUrl ? imageUrl.trim() : '',
@@ -280,7 +303,7 @@ router.post('/', verifyToken, async (req, res) => {
   }
 });
 
-// Update Post (Author OR Admin)
+// Update Post (Author OR Admin) - Permanently updates author to active user's name
 router.put('/:id', verifyToken, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -288,12 +311,24 @@ router.put('/:id', verifyToken, async (req, res) => {
 
     const isAuthor = post.authorId && post.authorId.toString() === req.user.id;
     const isAdmin = req.user.role === 'admin';
+    const isLegacyAnonymous = !post.authorId || post.author === 'Anonymous';
 
-    if (!isAuthor && !isAdmin) {
+    if (!isAuthor && !isAdmin && !isLegacyAnonymous) {
       return res.status(403).json({ error: 'Forbidden: Only the author or an admin can edit this article.' });
     }
 
-    const updated = await Post.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const updateData = { ...req.body };
+    
+    // Always assign real author name
+    updateData.author = (req.body.author && req.body.author !== 'Anonymous') 
+      ? req.body.author 
+      : (req.user.name || post.author);
+      
+    if (!post.authorId || post.author === 'Anonymous') {
+      updateData.authorId = req.user.id;
+    }
+
+    const updated = await Post.findByIdAndUpdate(req.params.id, updateData, { new: true });
     res.json(updated);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -308,8 +343,9 @@ router.delete('/:id', verifyToken, async (req, res) => {
 
     const isAuthor = post.authorId && post.authorId.toString() === req.user.id;
     const isAdmin = req.user.role === 'admin';
+    const isLegacyAnonymous = !post.authorId || post.author === 'Anonymous';
 
-    if (!isAuthor && !isAdmin) {
+    if (!isAuthor && !isAdmin && !isLegacyAnonymous) {
       return res.status(403).json({ error: 'Forbidden: Only the author or an admin can delete this article.' });
     }
 
@@ -352,7 +388,6 @@ router.patch('/:id/clap', handleLikeToggle);
 // 6. COMMENTS & CASCADING REPLIES DELETE
 // ==========================================
 
-// Add Comment
 router.post('/:id/comments', async (req, res) => {
   const { author, authorId, content, parentId } = req.body;
   try {
@@ -373,7 +408,6 @@ router.post('/:id/comments', async (req, res) => {
   }
 });
 
-// Delete Comment (Author of Comment, Author of Post, OR Admin)
 router.delete('/:postId/comments/:commentId', verifyToken, async (req, res) => {
   const { postId, commentId } = req.params;
 
@@ -394,7 +428,6 @@ router.delete('/:postId/comments/:commentId', verifyToken, async (req, res) => {
       return res.status(403).json({ message: 'Forbidden: Insufficient permissions to delete this comment.' });
     }
 
-    // Recursively collect target comment and any child replies
     const idsToDelete = new Set([commentId.toString()]);
     let added = true;
     while (added) {

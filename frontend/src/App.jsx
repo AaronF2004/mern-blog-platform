@@ -111,6 +111,17 @@ export default function App() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
+  // Helper: Display clean author name. If database has "Anonymous", map to logged-in user or "Author"
+  const getDisplayAuthor = (post) => {
+    if (post.author && post.author.trim() !== '' && post.author !== 'Anonymous') {
+      return post.author;
+    }
+    if (currentUser) {
+      return currentUser.name;
+    }
+    return 'Author';
+  };
+
   const fetchPosts = async () => {
     try {
       setLoading(true);
@@ -137,6 +148,21 @@ export default function App() {
   useEffect(() => {
     fetchPosts();
   }, []);
+
+  // One-click Auto-Fix: If logged in, automatically claim all legacy "Anonymous" posts in DB
+  useEffect(() => {
+    if (currentUser && currentUser.name) {
+      axios
+        .patch(`${API_URL}/claim-all-anonymous`, {}, { headers: getAuthHeader() })
+        .then((res) => {
+          if (Array.isArray(res.data)) {
+            setPosts(res.data);
+            localStorage.setItem('mern_cached_posts', JSON.stringify(res.data));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [currentUser]);
 
   // Listen for Admin Gateway shortcut: Ctrl + Shift + A or Hash #admin-portal
   useEffect(() => {
@@ -211,16 +237,13 @@ export default function App() {
     }
   };
 
-  // Synchronized Atomic View Increment
   const openReadingModal = async (post) => {
     const currentCount = typeof post.views === 'number' ? post.views : 0;
     const nextCount = currentCount + 1;
 
-    // 1. Immediately reflect increment in modal
     setReadingPost({ ...post, views: nextCount });
     setScrollProgress(0);
 
-    // 2. Optimistically update feed array & local cache
     setPosts((prevPosts) => {
       const updated = prevPosts.map((p) =>
         p._id === post._id ? { ...p, views: nextCount } : p
@@ -229,7 +252,6 @@ export default function App() {
       return updated;
     });
 
-    // 3. Atomically persist to MongoDB
     try {
       const res = await axios.patch(`${API_URL}/${post._id}/view`);
       if (res.data && typeof res.data.views === 'number') {
@@ -251,6 +273,7 @@ export default function App() {
   const canModifyPost = (post) => {
     if (!currentUser) return false;
     if (currentUser.role === 'admin') return true;
+    if (!post.authorId || post.author === 'Anonymous') return true;
     if (post.authorId && (post.authorId === currentUser.id || post.authorId === currentUser._id)) {
       return true;
     }
@@ -318,7 +341,6 @@ export default function App() {
     }
   };
 
-  // Secure Admin Gateway Submission
   const handleAdminGatewayVerify = async (e) => {
     e.preventDefault();
     if (!adminPortalKey.trim()) return;
@@ -479,7 +501,8 @@ export default function App() {
     setEditId(post._id);
     setFormData({
       title: post.title,
-      author: post.author,
+      // If author was "Anonymous", immediately re-assign to currentUser
+      author: (!post.author || post.author === 'Anonymous') ? currentUser.name : post.author,
       category: post.category || '',
       imageUrl: post.imageUrl || '',
       content: post.content,
@@ -491,9 +514,11 @@ export default function App() {
   const handleSubmit = async (targetStatus = 'published', e) => {
     if (e) e.preventDefault();
     const finalCategory = formData.category.trim() || 'Information Technology';
+    const authorName = currentUser?.name || formData.author?.trim() || 'Author';
 
     const payload = {
       title: formData.title.trim(),
+      author: authorName,
       category: finalCategory,
       imageUrl: formData.imageUrl.trim(),
       content: formData.content.trim(),
@@ -716,9 +741,10 @@ export default function App() {
         return false;
       }
 
+      const displayAuthor = getDisplayAuthor(post);
       const matchesSearch =
         post.title?.toLowerCase().includes(search.toLowerCase()) ||
-        post.author?.toLowerCase().includes(search.toLowerCase()) ||
+        displayAuthor.toLowerCase().includes(search.toLowerCase()) ||
         post.content?.toLowerCase().includes(search.toLowerCase());
 
       const matchesCategory =
@@ -754,7 +780,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 2. Top Navbar (Clean, Real-World Public UI) */}
+      {/* 2. Top Navbar */}
       <header className="navbar">
         <div className="nav-container">
           <div className="logo" onClick={() => setSelectedCategory('All')}>
@@ -863,6 +889,7 @@ export default function App() {
               const isLiked = likedPosts.includes(post._id);
               const isSaved = bookmarkedPostIds.includes(post._id);
               const displayLikes = typeof post.likes === 'number' ? post.likes : (post.claps || 0);
+              const displayAuthorName = getDisplayAuthor(post);
 
               return (
                 <article
@@ -900,7 +927,7 @@ export default function App() {
                     
                     <div className="card-footer">
                       <div className="author-info">
-                        <span className="author-name">{post.author}</span>
+                        <span className="author-name">{displayAuthorName}</span>
                         <span className="post-date">
                           {post.readTime || 1} min read •{' '}
                           {new Date(post.createdAt || Date.now()).toLocaleDateString('en-US', {
@@ -1065,7 +1092,7 @@ export default function App() {
             </h1>
             
             <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '1rem' }}>
-              By <strong>{readingPost.author}</strong> • {readingPost.readTime || 1} min read • 👁️ {readingPost.views || 0} views •{' '}
+              By <strong>{getDisplayAuthor(readingPost)}</strong> • {readingPost.readTime || 1} min read • 👁️ {readingPost.views || 0} views •{' '}
               {new Date(readingPost.createdAt || Date.now()).toLocaleDateString('en-US', {
                 month: 'long',
                 day: 'numeric',
@@ -1086,7 +1113,7 @@ export default function App() {
                 rel="noreferrer"
               >
                 <svg viewBox="0 0 24 24">
-                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.03 20.44 15.9C20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10 11.53 8.5 11.27 7.9C11.03 7.31 10.77 7.39 10.58 7.38C10.41 7.38 10.21 7.37 10 7.37C9.79 7.37 9.53 7.04 9.53 7.04Z" />
+                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.65 20.52 16.03 20.44 15.9C20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10 11.53 8.5 11.27 7.9C11.03 7.31 10.77 7.39 10.58 7.38C10.41 7.38 10.21 7.37 10 7.37C9.79 7.37 9.53 7.04 9.53 7.04Z" />
                 </svg>
               </a>
 
