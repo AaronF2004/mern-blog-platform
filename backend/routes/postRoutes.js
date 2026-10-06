@@ -186,7 +186,7 @@ router.post('/auth/claim-admin', verifyToken, async (req, res) => {
 });
 
 // ==========================================
-// 4. POSTS CRUD & VIEWS
+// 4. POSTS CRUD & ATOMIC VIEWS INCREMENT
 // ==========================================
 
 // Get All Posts
@@ -203,21 +203,35 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Increment View Counter
-router.patch('/:id/view', async (req, res) => {
+// Atomically Increment View Counter (Supports both PATCH and PUT)
+const handleViewIncrement = async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id);
-    if (!post) return res.status(404).json({ error: 'Post not found' });
+    const { id } = req.params;
 
-    post.views = (typeof post.views === 'number' ? post.views : 0) + 1;
-    await post.save();
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid post ID' });
+    }
 
-    return res.json({ views: post.views, postId: post._id });
+    // $inc atomically increments views; if the field does not exist, MongoDB initializes it to 1
+    const updated = await Post.findByIdAndUpdate(
+      id,
+      { $inc: { views: 1 } },
+      { new: true, runValidators: false }
+    );
+
+    if (!updated) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    return res.json({ views: updated.views, postId: updated._id });
   } catch (err) {
     console.error('View increment error:', err);
     return res.status(500).json({ error: err.message });
   }
-});
+};
+
+router.patch('/:id/view', handleViewIncrement);
+router.put('/:id/view', handleViewIncrement);
 
 // Get Single Post by Slug or ID
 router.get('/:identifier', async (req, res) => {
