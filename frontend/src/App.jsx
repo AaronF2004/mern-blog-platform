@@ -31,12 +31,12 @@ export default function App() {
   const [readingPost, setReadingPost] = useState(null);
   const [editId, setEditId] = useState(null);
 
-  // Status & Modal Popups
+  // Status & Confirmation Dialogs
   const [deleteTargetId, setDeleteTargetId] = useState(null);
   const [deleteCommentTargetId, setDeleteCommentTargetId] = useState(null);
   const [centerAlert, setCenterAlert] = useState(null);
 
-  // Drag and Drop State
+  // Drag and Drop
   const [isDragging, setIsDragging] = useState(false);
 
   // Authentication State
@@ -54,11 +54,11 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
 
-  // Hidden Administrative Gateway (Accessible via Ctrl+Shift+A or #admin-portal)
+  // Hidden Administrative Gateway
   const [isAdminPortalOpen, setIsAdminPortalOpen] = useState(false);
   const [adminPortalKey, setAdminPortalKey] = useState('');
 
-  // Liked Posts Tracker
+  // Liked & Bookmarked
   const [likedPosts, setLikedPosts] = useState(() => {
     try {
       const saved = localStorage.getItem('devpress_liked');
@@ -68,7 +68,6 @@ export default function App() {
     }
   });
 
-  // Bookmarked Posts Tracker
   const [bookmarkedPostIds, setBookmarkedPostIds] = useState(() => {
     try {
       const saved = localStorage.getItem('devpress_bookmarks');
@@ -82,7 +81,7 @@ export default function App() {
   const [scrollProgress, setScrollProgress] = useState(0);
   const articleModalRef = useRef(null);
 
-  // Post Form State
+  // Form State
   const [formData, setFormData] = useState({
     title: '',
     author: '',
@@ -111,6 +110,19 @@ export default function App() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
+  // Helper to sync URL hash for browser history back navigation
+  const setHash = (hash) => {
+    if (window.location.hash !== hash) {
+      window.location.hash = hash;
+    }
+  };
+
+  const clearHash = () => {
+    if (window.location.hash) {
+      window.history.pushState(null, '', window.location.pathname + window.location.search);
+    }
+  };
+
   // Strictly checks whether the current logged-in user created the post
   const isAuthorOfPost = (post) => {
     if (!currentUser || !post) return false;
@@ -127,7 +139,7 @@ export default function App() {
     return false;
   };
 
-  // Strictly checks whether the current logged-in user created the specific review/comment
+  // Strictly checks whether the current user authored the review
   const isAuthorOfComment = (comment) => {
     if (!currentUser || !comment) return false;
     const currentUserId = currentUser.id || currentUser._id;
@@ -143,7 +155,7 @@ export default function App() {
     return false;
   };
 
-  // Delete permission: PLATFORM ADMIN CAN DELETE ANY ARTICLE UNCONDITIONALLY, or Author
+  // Delete permission: Platform Admin can delete any article, or original author
   const canDeletePost = (post) => {
     if (!currentUser || !post) return false;
     if (currentUser.role === 'admin') return true;
@@ -160,6 +172,7 @@ export default function App() {
     return post.author || 'Author';
   };
 
+  // Always refresh latest posts from server
   const fetchPosts = async () => {
     try {
       setLoading(true);
@@ -171,49 +184,116 @@ export default function App() {
         }));
         setPosts(sanitized);
         localStorage.setItem('mern_cached_posts', JSON.stringify(sanitized));
+        return sanitized;
       }
     } catch (err) {
-      console.warn('Backend unavailable, checking cache.');
+      console.warn('Backend unavailable, loading local cache fallback.');
       const cached = localStorage.getItem('mern_cached_posts');
       if (cached) {
-        setPosts(JSON.parse(cached));
+        const parsed = JSON.parse(cached);
+        setPosts(parsed);
+        return parsed;
       }
     } finally {
       setLoading(false);
     }
+    return [];
   };
 
+  // Handle URL Hash navigation and browser back/forward buttons
   useEffect(() => {
-    fetchPosts();
+    const handleRouteFromHash = async (postList) => {
+      const hash = window.location.hash;
+
+      if (!hash || hash === '#') {
+        setReadingPost(null);
+        setIsModalOpen(false);
+        setIsAuthModalOpen(false);
+        setIsAdminPortalOpen(false);
+        return;
+      }
+
+      if (hash === '#admin-portal') {
+        setIsAdminPortalOpen(true);
+        setReadingPost(null);
+        setIsModalOpen(false);
+        setIsAuthModalOpen(false);
+        return;
+      }
+
+      if (hash === '#write') {
+        if (!currentUser) {
+          setIsAuthModalOpen(true);
+          setHash('#auth');
+        } else {
+          setIsModalOpen(true);
+          setReadingPost(null);
+        }
+        return;
+      }
+
+      if (hash === '#auth') {
+        setIsAuthModalOpen(true);
+        setReadingPost(null);
+        setIsModalOpen(false);
+        return;
+      }
+
+      // Check if hash matches an article ID or slug
+      const identifier = hash.replace('#', '');
+      const list = postList || posts;
+      let matched = list.find((p) => p._id === identifier || p.slug === identifier);
+
+      if (!matched && identifier) {
+        try {
+          const res = await axios.get(`${API_URL}/${identifier}`);
+          if (res.data && res.data._id) {
+            matched = res.data;
+          }
+        } catch {
+          // If not found, reset hash
+          clearHash();
+        }
+      }
+
+      if (matched) {
+        setReadingPost(matched);
+        setIsModalOpen(false);
+        setIsAuthModalOpen(false);
+      }
+    };
+
+    fetchPosts().then((fetched) => {
+      handleRouteFromHash(fetched);
+    });
+
+    const onPopState = () => {
+      handleRouteFromHash(posts);
+    };
+
+    window.addEventListener('popstate', onPopState);
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+    };
   }, []);
 
-  // Admin Gateway Shortcut: Ctrl + Shift + A or Hash #admin-portal
+  // Keyboard shortcut Ctrl + Shift + A for Admin Gateway
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a') {
         e.preventDefault();
-        setIsAdminPortalOpen(true);
-      }
-    };
-
-    const handleHashChange = () => {
-      if (window.location.hash === '#admin-portal') {
+        setHash('#admin-portal');
         setIsAdminPortalOpen(true);
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('hashchange', handleHashChange);
-    if (window.location.hash === '#admin-portal') {
-      setIsAdminPortalOpen(true);
-    }
-
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('hashchange', handleHashChange);
     };
   }, []);
 
+  // Modal scroll lock
   useEffect(() => {
     if (
       readingPost ||
@@ -241,6 +321,7 @@ export default function App() {
     isAdminPortalOpen
   ]);
 
+  // Syntax highlighting for code blocks in articles
   useEffect(() => {
     if (readingPost) {
       setTimeout(() => {
@@ -260,12 +341,14 @@ export default function App() {
     }
   };
 
+  // Open reading modal and record browser history entry so Back button works step-by-step
   const openReadingModal = async (post) => {
     const currentCount = Number(post.views) >= 0 ? Number(post.views) : 0;
     const nextCount = currentCount + 1;
 
     setReadingPost({ ...post, views: nextCount });
     setScrollProgress(0);
+    setHash(`#${post.slug || post._id}`);
 
     setPosts((prevPosts) => {
       const updated = prevPosts.map((p) =>
@@ -289,8 +372,13 @@ export default function App() {
         });
       }
     } catch (err) {
-      console.error('Failed to sync views counter to MongoDB:', err);
+      console.error('Failed to sync views counter:', err);
     }
+  };
+
+  const closeReadingModal = () => {
+    setReadingPost(null);
+    clearHash();
   };
 
   const toggleBookmark = (postId, e) => {
@@ -340,12 +428,14 @@ export default function App() {
         localStorage.setItem('devpress_user', JSON.stringify(res.data.user));
         setCurrentUser(res.data.user);
         setIsAuthModalOpen(false);
+        clearHash();
         setAuthForm({ name: '', email: '', password: '' });
         showAlert(
           isLoginView ? 'Welcome Back!' : 'Account Created!',
           `Signed in as ${res.data.user.name}.`,
           'success'
         );
+        fetchPosts(); // Refresh articles for role permissions
       }
     } catch (err) {
       setAuthError(err.response?.data?.message || 'Authentication failed. Please verify credentials.');
@@ -361,6 +451,7 @@ export default function App() {
     if (!currentUser) {
       showAlert('Login Required', 'Please sign in to your author account first before claiming Admin privileges.', 'danger');
       setIsAdminPortalOpen(false);
+      setHash('#auth');
       setIsAuthModalOpen(true);
       return;
     }
@@ -377,10 +468,9 @@ export default function App() {
       setCurrentUser(res.data.user);
       setIsAdminPortalOpen(false);
       setAdminPortalKey('');
-      if (window.location.hash === '#admin-portal') {
-        window.history.replaceState(null, '', window.location.pathname);
-      }
+      clearHash();
       showAlert('Admin Granted', 'Administrative access authorized successfully.', 'success');
+      fetchPosts();
     } catch (err) {
       showAlert('Unauthorized', err.response?.data?.message || 'Invalid administrative credentials.', 'danger');
     }
@@ -390,7 +480,9 @@ export default function App() {
     localStorage.removeItem('devpress_token');
     localStorage.removeItem('devpress_user');
     setCurrentUser(null);
+    clearHash();
     showAlert('Signed Out', 'You have been logged out.', 'danger');
+    fetchPosts();
   };
 
   const insertFormatting = (tagStart, tagEnd = '') => {
@@ -434,7 +526,7 @@ export default function App() {
 
       if (res.data && res.data.imageUrl) {
         setFormData((prev) => ({ ...prev, imageUrl: res.data.imageUrl }));
-        showAlert('Image Uploaded', 'Cover image uploaded to Cloudinary successfully!', 'success');
+        showAlert('Image Uploaded', 'Cover image uploaded successfully!', 'success');
         return;
       }
     } catch (err) {
@@ -490,6 +582,7 @@ export default function App() {
 
   const openCreateModal = () => {
     if (!currentUser) {
+      setHash('#auth');
       setIsAuthModalOpen(true);
       return;
     }
@@ -502,7 +595,13 @@ export default function App() {
       content: '',
       status: 'published'
     });
+    setHash('#write');
     setIsModalOpen(true);
+  };
+
+  const closeCreateModal = () => {
+    setIsModalOpen(false);
+    clearHash();
   };
 
   const handleEdit = (post, e) => {
@@ -520,9 +619,11 @@ export default function App() {
       content: post.content,
       status: post.status || 'published'
     });
+    setHash(`#edit-${post._id}`);
     setIsModalOpen(true);
   };
 
+  // Submit and immediately refresh all posts from backend
   const handleSubmit = async (targetStatus = 'published', e) => {
     if (e) e.preventDefault();
     const finalCategory = formData.category.trim() || 'Information Technology';
@@ -539,38 +640,19 @@ export default function App() {
 
     try {
       if (editId) {
-        const res = await axios.put(`${API_URL}/${editId}`, payload, {
+        await axios.put(`${API_URL}/${editId}`, payload, {
           headers: getAuthHeader()
         });
-        const updatedPost = {
-          ...res.data,
-          views: Number(res.data.views) >= 0 ? Number(res.data.views) : 0
-        };
-
-        setPosts((prevPosts) => {
-          const updated = prevPosts.map((p) => (p._id === editId ? updatedPost : p));
-          localStorage.setItem('mern_cached_posts', JSON.stringify(updated));
-          return updated;
-        });
-
         setIsModalOpen(false);
+        clearHash();
         showAlert('Article Updated', 'Your changes have been saved.', 'success');
+        await fetchPosts();
       } else {
-        const res = await axios.post(API_URL, payload, {
+        await axios.post(API_URL, payload, {
           headers: getAuthHeader()
         });
-        const createdPost = {
-          ...res.data,
-          views: Number(res.data.views) >= 0 ? Number(res.data.views) : 0
-        };
-
-        setPosts((prevPosts) => {
-          const updated = [createdPost, ...prevPosts];
-          localStorage.setItem('mern_cached_posts', JSON.stringify(updated));
-          return updated;
-        });
-
         setIsModalOpen(false);
+        clearHash();
         showAlert(
           targetStatus === 'draft' ? 'Draft Saved' : 'Article Published',
           targetStatus === 'draft'
@@ -578,6 +660,7 @@ export default function App() {
             : 'Your article is now live on the homepage.',
           'success'
         );
+        await fetchPosts();
       }
     } catch (err) {
       console.error('Error saving post:', err);
@@ -590,7 +673,7 @@ export default function App() {
   };
 
   const promptDelete = (post, e) => {
-    if (e) e.stopPropagation();
+    e.stopPropagation();
     if (!canDeletePost(post)) {
       showAlert('Access Denied', 'Only the original author or an admin can delete this article.', 'danger');
       return;
@@ -598,7 +681,7 @@ export default function App() {
     setDeleteTargetId(post._id);
   };
 
-  // ADMIN OR AUTHOR DELETE HANDLER
+  // Confirm delete and immediately re-sync data
   const confirmDelete = async (e) => {
     if (e) e.stopPropagation();
     if (!deleteTargetId) return;
@@ -608,12 +691,9 @@ export default function App() {
         headers: getAuthHeader()
       });
 
-      const updated = posts.filter((p) => p._id !== deleteTargetId);
-      setPosts(updated);
-      localStorage.setItem('mern_cached_posts', JSON.stringify(updated));
-
       if (readingPost && readingPost._id === deleteTargetId) {
         setReadingPost(null);
+        clearHash();
       }
 
       setDeleteTargetId(null);
@@ -622,6 +702,7 @@ export default function App() {
         res.data?.message || 'The article was permanently removed from the platform.',
         'danger'
       );
+      await fetchPosts();
     } catch (err) {
       console.error('Error deleting post:', err);
       showAlert(
@@ -679,8 +760,6 @@ export default function App() {
       }
     } catch (err) {
       console.error('Like database sync error:', err);
-      setLikedPosts(likedPosts);
-      localStorage.setItem('devpress_liked', JSON.stringify(likedPosts));
       fetchPosts();
     }
   };
@@ -819,7 +898,15 @@ export default function App() {
       {/* 2. Top Navbar */}
       <header className="navbar">
         <div className="nav-container">
-          <div className="logo" onClick={() => setSelectedCategory('All')}>
+          <div
+            className="logo"
+            onClick={() => {
+              setSelectedCategory('All');
+              clearHash();
+              closeReadingModal();
+              fetchPosts();
+            }}
+          >
             Dev<span>Press</span>
           </div>
           <div className="auth-actions">
@@ -841,6 +928,7 @@ export default function App() {
                 className="btn-sm"
                 onClick={() => {
                   setAuthError('');
+                  setHash('#auth');
                   setIsAuthModalOpen(true);
                 }}
               >
@@ -996,7 +1084,7 @@ export default function App() {
                           <span>{displayLikes}</span>
                         </button>
 
-                        {/* EDIT BUTTON: ONLY TO THE AUTHOR WHO CREATED IT */}
+                        {/* EDIT BUTTON: Visible only to the original author */}
                         {isAuthor && (
                           <button
                             className="btn-sm"
@@ -1091,9 +1179,9 @@ export default function App() {
         </div>
       )}
 
-      {/* 8. Centered Reading View Modal */}
+      {/* 8. Centered Reading View Modal (With clean history step back) */}
       {readingPost && (
-        <div className="modal-overlay" onClick={() => setReadingPost(null)}>
+        <div className="modal-overlay" onClick={closeReadingModal}>
           <div
             className="modal-content"
             ref={articleModalRef}
@@ -1112,7 +1200,7 @@ export default function App() {
                 <span className="card-tag">{readingPost.category || 'General'}</span>
                 {readingPost.status === 'draft' && <span className="draft-badge">Draft</span>}
               </div>
-              <button className="close-btn" onClick={() => setReadingPost(null)}>
+              <button className="close-btn" onClick={closeReadingModal}>
                 &times;
               </button>
             </div>
@@ -1181,7 +1269,7 @@ export default function App() {
                 rel="noreferrer"
               >
                 <svg viewBox="0 0 24 24">
-                  <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.25c-.95 0-1.72.78-1.72 1.73s.77 1.73 1.72 1.73 1.73-.78 1.73-1.73-.78-1.73-1.73Z" />
+                  <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.25c-.95 0-1.72.78-1.72 1.73s.77 1.73 1.72 1.73 1.73-.78 1.73-1.73-.78-1.73-1.73-1.73Z" />
                 </svg>
               </a>
 
@@ -1447,7 +1535,7 @@ export default function App() {
             </div>
 
             <div className="modal-footer" style={{ marginTop: '1.5rem' }}>
-              <button className="btn-primary" onClick={() => setReadingPost(null)}>
+              <button className="btn-primary" onClick={closeReadingModal}>
                 Done Reading
               </button>
             </div>
@@ -1457,11 +1545,11 @@ export default function App() {
 
       {/* 9. Create / Edit Article Modal */}
       {isModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
+        <div className="modal-overlay" onClick={closeCreateModal}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{editId ? 'Edit Article' : 'Write an Article'}</h3>
-              <button className="close-btn" onClick={() => setIsModalOpen(false)}>
+              <button className="close-btn" onClick={closeCreateModal}>
                 &times;
               </button>
             </div>
@@ -1579,7 +1667,7 @@ export default function App() {
                 <button
                   type="button"
                   className="btn-sm"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={closeCreateModal}
                 >
                   Cancel
                 </button>
@@ -1601,7 +1689,7 @@ export default function App() {
 
       {/* 10. Authentication Modal */}
       {isAuthModalOpen && (
-        <div className="modal-overlay" onClick={() => setIsAuthModalOpen(false)}>
+        <div className="modal-overlay" onClick={() => { setIsAuthModalOpen(false); clearHash(); }}>
           <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
             <h3>{isLoginView ? 'Sign In to DevPress' : 'Create an Account'}</h3>
             <p style={{ marginBottom: '1.25rem' }}>
@@ -1685,7 +1773,7 @@ export default function App() {
 
       {/* 11. Hidden Administrative Gateway Modal */}
       {isAdminPortalOpen && (
-        <div className="modal-overlay" onClick={() => setIsAdminPortalOpen(false)}>
+        <div className="modal-overlay" onClick={() => { setIsAdminPortalOpen(false); clearHash(); }}>
           <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
             <div className="confirm-icon" style={{ background: '#fef2f2', color: '#dc2626' }}>🛡️</div>
             <h3>System Admin Gateway</h3>
@@ -1705,7 +1793,7 @@ export default function App() {
                 <button
                   type="button"
                   className="btn-sm"
-                  onClick={() => setIsAdminPortalOpen(false)}
+                  onClick={() => { setIsAdminPortalOpen(false); clearHash(); }}
                 >
                   Close
                 </button>
