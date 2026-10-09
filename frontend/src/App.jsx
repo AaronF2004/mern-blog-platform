@@ -111,7 +111,7 @@ export default function App() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
-  // Strictly checks whether the current logged-in user is the creator of the post
+  // Strictly checks whether the current logged-in user created the post
   const isAuthorOfPost = (post) => {
     if (!currentUser || !post) return false;
     const currentUserId = currentUser.id || currentUser._id;
@@ -121,14 +121,29 @@ export default function App() {
     ) {
       return true;
     }
-    // Match by author name if created under this account
     if (post.author && currentUser.name) {
       return post.author.toLowerCase().trim() === currentUser.name.toLowerCase().trim();
     }
     return false;
   };
 
-  // Delete permission: Author OR Platform Admin
+  // Strictly checks whether the current logged-in user created the specific review/comment
+  const isAuthorOfComment = (comment) => {
+    if (!currentUser || !comment) return false;
+    const currentUserId = currentUser.id || currentUser._id;
+    if (
+      comment.authorId &&
+      (comment.authorId === currentUserId || comment.authorId.toString() === currentUserId.toString())
+    ) {
+      return true;
+    }
+    if (comment.author && currentUser.name) {
+      return comment.author.toLowerCase().trim() === currentUser.name.toLowerCase().trim();
+    }
+    return false;
+  };
+
+  // Post Delete permission: Author OR Platform Admin
   const canDeletePost = (post) => {
     if (!currentUser || !post) return false;
     if (currentUser.role === 'admin') return true;
@@ -490,7 +505,6 @@ export default function App() {
     setIsModalOpen(true);
   };
 
-  // Only the creator can trigger edit
   const handleEdit = (post, e) => {
     e.stopPropagation();
     if (!isAuthorOfPost(post)) {
@@ -699,9 +713,13 @@ export default function App() {
     }
   };
 
-  const promptDeleteComment = (commentId, e) => {
+  const promptDeleteComment = (comment, e) => {
     if (e) e.stopPropagation();
-    setDeleteCommentTargetId(commentId);
+    if (!isAuthorOfComment(comment)) {
+      showAlert('Access Denied', 'Only the user who created this review can delete it.', 'danger');
+      return;
+    }
+    setDeleteCommentTargetId(comment._id);
   };
 
   const confirmDeleteComment = async (e) => {
@@ -724,11 +742,11 @@ export default function App() {
       });
 
       setDeleteCommentTargetId(null);
-      showAlert('Comment Deleted', 'The comment and its discussion thread were removed.');
+      showAlert('Review Deleted', 'Your review and discussion replies have been removed.');
     } catch (err) {
       console.error('Delete comment failed:', err);
       setDeleteCommentTargetId(null);
-      showAlert('Error', err.response?.data?.message || 'Could not delete comment.', 'danger');
+      showAlert('Error', err.response?.data?.message || 'Could not delete review.', 'danger');
     }
   };
 
@@ -964,7 +982,7 @@ export default function App() {
                           <span>{displayLikes}</span>
                         </button>
 
-                        {/* EDIT BUTTON: STRICTLY VISIBLE ONLY TO THE AUTHOR WHO CREATED IT */}
+                        {/* EDIT BUTTON: ONLY TO THE AUTHOR WHO CREATED IT */}
                         {isAuthor && (
                           <button
                             className="btn-sm"
@@ -975,7 +993,7 @@ export default function App() {
                           </button>
                         )}
 
-                        {/* DELETE BUTTON: Visible to Author, or to Admin as Admin Delete */}
+                        {/* DELETE BUTTON: Visible to Author, or to Admin */}
                         {hasDeleteRights && (
                           <button
                             className="btn-sm delete"
@@ -1035,9 +1053,9 @@ export default function App() {
         >
           <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
             <div className="confirm-icon">!</div>
-            <h3>Delete Comment?</h3>
+            <h3>Delete Review?</h3>
             <p>
-              Are you sure you want to delete this comment? All replies attached to this discussion thread will also be removed.
+              Are you sure you want to delete your review? Any replies attached to this discussion will also be removed.
             </p>
             <div className="confirm-actions">
               <button
@@ -1121,7 +1139,7 @@ export default function App() {
                 rel="noreferrer"
               >
                 <svg viewBox="0 0 24 24">
-                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.03 20.44 15.9 20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10.88 12.24 10.68 12.24 10.68Z" />
+                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.65 20.52 16.03 20.44 15.9C20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10.88 12.24 10.68 12.24 10.68Z" />
                 </svg>
               </a>
 
@@ -1149,7 +1167,7 @@ export default function App() {
                 rel="noreferrer"
               >
                 <svg viewBox="0 0 24 24">
-                  <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.25c-.95 0-1.72.78-1.72 1.73s.77 1.73 1.72 1.73 1.73-.78 1.73-1.73-.78-1.73-1.73-1.73Z" />
+                  <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.25c-.95 0-1.72.78-1.72 1.73s.77 1.73 1.72 1.73 1.73-.78 1.73-1.73-.78-1.73-1.73Z" />
                 </svg>
               </a>
 
@@ -1219,7 +1237,7 @@ export default function App() {
                 </button>
               </div>
 
-              {/* READING VIEW ACTIONS */}
+              {/* Reading View Actions */}
               <div style={{ display: 'flex', gap: '0.4rem' }}>
                 {isAuthorOfPost(readingPost) && (
                   <button className="btn-sm" onClick={(e) => handleEdit(readingPost, e)}>
@@ -1236,7 +1254,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* Creative Discussion & Threaded Comments Section */}
+            {/* Creative Discussion & Threaded Reviews Section */}
             <div className="creative-discussion">
               <div className="discussion-header">
                 <h3>Discussion</h3>
@@ -1295,12 +1313,8 @@ export default function App() {
                   readingPost.comments
                     ?.filter((c) => !c.parentId)
                     .map((parent) => {
-                      const isCommentAuthor =
-                        currentUser &&
-                        (currentUser.name?.toLowerCase().trim() === parent.author?.toLowerCase().trim() ||
-                          (parent.authorId && (parent.authorId === currentUser.id || parent.authorId === currentUser._id)) ||
-                          currentUser.role === 'admin' ||
-                          isAuthorOfPost(readingPost));
+                      // STRICT REVIEW OWNER ACCESS ONLY
+                      const canDeleteReview = isAuthorOfComment(parent);
 
                       return (
                         <div key={parent._id} className="comment-node">
@@ -1335,12 +1349,13 @@ export default function App() {
                                   Reply
                                 </button>
 
-                                {isCommentAuthor && (
+                                {/* STRICTLY VISIBLE ONLY TO THE USER WHO CREATED THE REVIEW */}
+                                {canDeleteReview && (
                                   <button
                                     type="button"
                                     className="btn-delete-comment"
-                                    title={currentUser?.role === 'admin' ? "Delete as Admin" : "Delete comment"}
-                                    onClick={(e) => promptDeleteComment(parent._id, e)}
+                                    title="Delete your review"
+                                    onClick={(e) => promptDeleteComment(parent, e)}
                                   >
                                     <svg viewBox="0 0 24 24">
                                       <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
@@ -1356,12 +1371,8 @@ export default function App() {
                           {readingPost.comments
                             ?.filter((c) => c.parentId === parent._id)
                             .map((reply) => {
-                              const isReplyAuthor =
-                                currentUser &&
-                                (currentUser.name?.toLowerCase().trim() === reply.author?.toLowerCase().trim() ||
-                                  (reply.authorId && (reply.authorId === currentUser.id || reply.authorId === currentUser._id)) ||
-                                  currentUser.role === 'admin' ||
-                                  isAuthorOfPost(readingPost));
+                              // STRICT REPLY OWNER ACCESS ONLY
+                              const canDeleteReply = isAuthorOfComment(reply);
 
                               return (
                                 <div key={reply._id} className="creative-comment is-reply">
@@ -1398,12 +1409,13 @@ export default function App() {
                                         Reply
                                       </button>
 
-                                      {isReplyAuthor && (
+                                      {/* STRICTLY VISIBLE ONLY TO THE USER WHO CREATED THE REPLY */}
+                                      {canDeleteReply && (
                                         <button
                                           type="button"
                                           className="btn-delete-comment"
-                                          title={currentUser?.role === 'admin' ? "Delete as Admin" : "Delete reply"}
-                                          onClick={(e) => promptDeleteComment(reply._id, e)}
+                                          title="Delete your reply"
+                                          onClick={(e) => promptDeleteComment(reply, e)}
                                         >
                                           <svg viewBox="0 0 24 24">
                                             <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />

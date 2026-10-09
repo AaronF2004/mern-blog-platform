@@ -185,7 +185,6 @@ router.post('/auth/claim-admin', verifyToken, async (req, res) => {
 // 4. POSTS CRUD & ATOMIC VIEW PERSISTENCE
 // ==========================================
 
-// GET all posts
 router.get('/', async (req, res) => {
   try {
     const posts = await Post.find().sort({ createdAt: -1 }).lean();
@@ -199,7 +198,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Atomic increment for views
 const handleViewIncrement = async (req, res) => {
   try {
     const { id } = req.params;
@@ -229,7 +227,6 @@ router.patch('/:id/view', handleViewIncrement);
 router.put('/:id/view', handleViewIncrement);
 router.post('/:id/view', handleViewIncrement);
 
-// Reassign legacy anonymous posts
 router.patch('/claim-all-anonymous', verifyToken, async (req, res) => {
   try {
     const authorName = req.user.name || 'Author';
@@ -264,7 +261,6 @@ router.get('/:identifier', async (req, res) => {
   }
 });
 
-// Create Post
 router.post('/', verifyToken, async (req, res) => {
   try {
     const { title, category, imageUrl, content, status, author } = req.body;
@@ -298,7 +294,7 @@ router.post('/', verifyToken, async (req, res) => {
   }
 });
 
-// Update Post (STRICTLY AUTHOR ONLY - Admins and other users CANNOT edit)
+// Update Post (STRICTLY AUTHOR ONLY)
 router.put('/:id', verifyToken, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -310,7 +306,6 @@ router.put('/:id', verifyToken, async (req, res) => {
       post.author.toLowerCase().trim() === req.user.name.toLowerCase().trim();
     const isLegacyAnonymous = !post.authorId || post.author === 'Anonymous';
 
-    // Only the author who created it can edit
     if (!isAuthor && !isLegacyNameMatch && !isLegacyAnonymous) {
       return res.status(403).json({ error: 'Forbidden: Only the author who created this article can edit it.' });
     }
@@ -331,7 +326,7 @@ router.put('/:id', verifyToken, async (req, res) => {
   }
 });
 
-// Delete Post (Author OR Platform Admin)
+// Delete Post (Author OR Admin)
 router.delete('/:id', verifyToken, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
@@ -384,7 +379,7 @@ router.patch('/:id/like', handleLikeToggle);
 router.patch('/:id/clap', handleLikeToggle);
 
 // ==========================================
-// 6. COMMENTS & CASCADING REPLIES
+// 6. COMMENTS & REVIEWS (STRICT OWNER ONLY DELETE)
 // ==========================================
 router.post('/:id/comments', async (req, res) => {
   const { author, authorId, content, parentId } = req.body;
@@ -406,6 +401,7 @@ router.post('/:id/comments', async (req, res) => {
   }
 });
 
+// Delete Review/Comment: STRICTLY THE USER WHO CREATED THE REVIEW ONLY
 router.delete('/:postId/comments/:commentId', verifyToken, async (req, res) => {
   const { postId, commentId } = req.params;
 
@@ -418,14 +414,20 @@ router.delete('/:postId/comments/:commentId', verifyToken, async (req, res) => {
       return res.status(404).json({ message: 'Comment not found.' });
     }
 
-    const isCommentAuthor = targetComment.authorId && targetComment.authorId.toString() === req.user.id;
-    const isPostAuthor = post.authorId && post.authorId.toString() === req.user.id;
-    const isAdmin = req.user.role === 'admin';
+    // STRICT CHECK: Matches the comment creator's ObjectId or user's exact name
+    const isCommentAuthorById =
+      targetComment.authorId && targetComment.authorId.toString() === req.user.id.toString();
+    const isCommentAuthorByName =
+      targetComment.author && req.user.name &&
+      targetComment.author.toLowerCase().trim() === req.user.name.toLowerCase().trim();
 
-    if (!isCommentAuthor && !isPostAuthor && !isAdmin) {
-      return res.status(403).json({ message: 'Forbidden: Insufficient permissions.' });
+    if (!isCommentAuthorById && !isCommentAuthorByName) {
+      return res.status(403).json({
+        message: 'Forbidden: Only the user who created this review can delete it.'
+      });
     }
 
+    // Collect target comment and any child replies
     const idsToDelete = new Set([commentId.toString()]);
     let added = true;
     while (added) {
