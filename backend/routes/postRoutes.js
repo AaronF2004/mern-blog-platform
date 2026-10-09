@@ -37,7 +37,7 @@ router.post('/upload', (req, res) => {
     if (err) {
       console.error('Cloudinary/Multer Upload Error:', err);
       return res.status(500).json({
-        error: err.message || 'Cloudinary credentials missing or upload rejected.'
+        error: err.message || 'Cloudinary upload rejected.'
       });
     }
 
@@ -52,8 +52,6 @@ router.post('/upload', (req, res) => {
 // ==========================================
 // 3. AUTHENTICATION & ADMIN GATEWAY
 // ==========================================
-
-// Standard Public Registration
 router.post('/auth/register', async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -104,7 +102,6 @@ router.post('/auth/register', async (req, res) => {
   }
 });
 
-// Standard Public Login
 router.post('/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -146,7 +143,6 @@ router.post('/auth/login', async (req, res) => {
   }
 });
 
-// Hidden Gateway: Verify Master Secret to Grant Administrative Role
 router.post('/auth/claim-admin', verifyToken, async (req, res) => {
   try {
     const { adminSecret } = req.body;
@@ -186,24 +182,54 @@ router.post('/auth/claim-admin', verifyToken, async (req, res) => {
 });
 
 // ==========================================
-// 4. POSTS CRUD & ATOMIC VIEWS INCREMENT
+// 4. POSTS CRUD & ATOMIC VIEW PERSISTENCE
 // ==========================================
 
-// Get All Posts
+// GET all posts
 router.get('/', async (req, res) => {
   try {
     const posts = await Post.find().sort({ createdAt: -1 }).lean();
     const sanitizedPosts = posts.map((p) => ({
       ...p,
-      views: typeof p.views === 'number' ? p.views : 0
+      views: Number(p.views) >= 0 ? Number(p.views) : 0
     }));
-    res.json(sanitizedPosts);
+    return res.json(sanitizedPosts);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 
-// Fix Existing Posts: Reassign all "Anonymous" posts to the authenticated author
+// Atomic increment for views
+const handleViewIncrement = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid post ID' });
+    }
+
+    const updated = await Post.findByIdAndUpdate(
+      id,
+      { $inc: { views: 1 } },
+      { new: true, runValidators: false, upsert: false }
+    ).lean();
+
+    if (!updated) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    return res.json({ views: Number(updated.views), postId: updated._id });
+  } catch (err) {
+    console.error('View increment error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+};
+
+router.patch('/:id/view', handleViewIncrement);
+router.put('/:id/view', handleViewIncrement);
+router.post('/:id/view', handleViewIncrement);
+
+// Reassign legacy anonymous posts
 router.patch('/claim-all-anonymous', verifyToken, async (req, res) => {
   try {
     const authorName = req.user.name || 'Author';
@@ -222,49 +248,19 @@ router.patch('/claim-all-anonymous', verifyToken, async (req, res) => {
   }
 });
 
-// Atomically Increment View Counter
-const handleViewIncrement = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    if (!mongoose.Types.ObjectId.isValid(id)) {
-      return res.status(400).json({ error: 'Invalid post ID' });
-    }
-
-    const updated = await Post.findByIdAndUpdate(
-      id,
-      { $inc: { views: 1 } },
-      { new: true, runValidators: false }
-    );
-
-    if (!updated) {
-      return res.status(404).json({ error: 'Post not found' });
-    }
-
-    return res.json({ views: updated.views, postId: updated._id });
-  } catch (err) {
-    console.error('View increment error:', err);
-    return res.status(500).json({ error: err.message });
-  }
-};
-
-router.patch('/:id/view', handleViewIncrement);
-router.put('/:id/view', handleViewIncrement);
-
-// Get Single Post by Slug or ID
 router.get('/:identifier', async (req, res) => {
   try {
     const { identifier } = req.params;
     const isObjectId = mongoose.Types.ObjectId.isValid(identifier);
 
     const post = isObjectId
-      ? await Post.findById(identifier)
-      : await Post.findOne({ slug: identifier });
+      ? await Post.findById(identifier).lean()
+      : await Post.findOne({ slug: identifier }).lean();
 
     if (!post) return res.status(404).json({ message: 'Article not found.' });
-    res.json(post);
+    return res.json({ ...post, views: Number(post.views) >= 0 ? Number(post.views) : 0 });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 
@@ -277,7 +273,6 @@ router.post('/', verifyToken, async (req, res) => {
       return res.status(400).json({ error: 'Title and content are required.' });
     }
 
-    // Resolves author name strictly from token or client payload
     const resolvedAuthor = (author && author.trim() && author !== 'Anonymous')
       ? author.trim()
       : (req.user?.name || 'Author');
@@ -303,56 +298,60 @@ router.post('/', verifyToken, async (req, res) => {
   }
 });
 
-// Update Post (Author OR Admin) - Permanently updates author to active user's name
+// Update Post (STRICTLY AUTHOR ONLY - Admins and other users CANNOT edit)
 router.put('/:id', verifyToken, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ error: 'Post not found' });
 
     const isAuthor = post.authorId && post.authorId.toString() === req.user.id;
-    const isAdmin = req.user.role === 'admin';
+    const isLegacyNameMatch =
+      !post.authorId && post.author && req.user.name &&
+      post.author.toLowerCase().trim() === req.user.name.toLowerCase().trim();
     const isLegacyAnonymous = !post.authorId || post.author === 'Anonymous';
 
-    if (!isAuthor && !isAdmin && !isLegacyAnonymous) {
-      return res.status(403).json({ error: 'Forbidden: Only the author or an admin can edit this article.' });
+    // Only the author who created it can edit
+    if (!isAuthor && !isLegacyNameMatch && !isLegacyAnonymous) {
+      return res.status(403).json({ error: 'Forbidden: Only the author who created this article can edit it.' });
     }
 
     const updateData = { ...req.body };
-    
-    // Always assign real author name
-    updateData.author = (req.body.author && req.body.author !== 'Anonymous') 
-      ? req.body.author 
+    updateData.author = (req.body.author && req.body.author !== 'Anonymous')
+      ? req.body.author
       : (req.user.name || post.author);
-      
+
     if (!post.authorId || post.author === 'Anonymous') {
       updateData.authorId = req.user.id;
     }
 
     const updated = await Post.findByIdAndUpdate(req.params.id, updateData, { new: true });
-    res.json(updated);
+    return res.json(updated);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    return res.status(400).json({ error: err.message });
   }
 });
 
-// Delete Post (Author OR Admin)
+// Delete Post (Author OR Platform Admin)
 router.delete('/:id', verifyToken, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ error: 'Post not found' });
 
     const isAuthor = post.authorId && post.authorId.toString() === req.user.id;
+    const isLegacyNameMatch =
+      !post.authorId && post.author && req.user.name &&
+      post.author.toLowerCase().trim() === req.user.name.toLowerCase().trim();
     const isAdmin = req.user.role === 'admin';
     const isLegacyAnonymous = !post.authorId || post.author === 'Anonymous';
 
-    if (!isAuthor && !isAdmin && !isLegacyAnonymous) {
+    if (!isAuthor && !isLegacyNameMatch && !isAdmin && !isLegacyAnonymous) {
       return res.status(403).json({ error: 'Forbidden: Only the author or an admin can delete this article.' });
     }
 
     await Post.findByIdAndDelete(req.params.id);
-    res.json({ message: `Post deleted successfully by ${isAdmin ? 'Admin' : 'Author'}.` });
+    return res.json({ message: `Post deleted successfully by ${isAdmin ? 'Admin' : 'Author'}.` });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 
@@ -385,9 +384,8 @@ router.patch('/:id/like', handleLikeToggle);
 router.patch('/:id/clap', handleLikeToggle);
 
 // ==========================================
-// 6. COMMENTS & CASCADING REPLIES DELETE
+// 6. COMMENTS & CASCADING REPLIES
 // ==========================================
-
 router.post('/:id/comments', async (req, res) => {
   const { author, authorId, content, parentId } = req.body;
   try {
@@ -402,9 +400,9 @@ router.post('/:id/comments', async (req, res) => {
     });
 
     await post.save();
-    res.status(201).json(post.comments);
+    return res.status(201).json(post.comments);
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    return res.status(400).json({ error: err.message });
   }
 });
 
@@ -425,7 +423,7 @@ router.delete('/:postId/comments/:commentId', verifyToken, async (req, res) => {
     const isAdmin = req.user.role === 'admin';
 
     if (!isCommentAuthor && !isPostAuthor && !isAdmin) {
-      return res.status(403).json({ message: 'Forbidden: Insufficient permissions to delete this comment.' });
+      return res.status(403).json({ message: 'Forbidden: Insufficient permissions.' });
     }
 
     const idsToDelete = new Set([commentId.toString()]);

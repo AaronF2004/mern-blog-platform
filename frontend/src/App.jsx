@@ -82,7 +82,7 @@ export default function App() {
   const [scrollProgress, setScrollProgress] = useState(0);
   const articleModalRef = useRef(null);
 
-  // Post Form State with Status
+  // Post Form State
   const [formData, setFormData] = useState({
     title: '',
     author: '',
@@ -93,7 +93,7 @@ export default function App() {
   });
   const textareaRef = useRef(null);
 
-  // Threaded Comments State & Input Ref for jumping
+  // Comments State
   const [commentText, setCommentText] = useState('');
   const [replyParentId, setReplyParentId] = useState(null);
   const commentInputRef = useRef(null);
@@ -111,15 +111,38 @@ export default function App() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
-  // Helper: Display clean author name. If database has "Anonymous", map to logged-in user or "Author"
+  // Strictly checks whether the current logged-in user is the creator of the post
+  const isAuthorOfPost = (post) => {
+    if (!currentUser || !post) return false;
+    const currentUserId = currentUser.id || currentUser._id;
+    if (
+      post.authorId &&
+      (post.authorId === currentUserId || post.authorId.toString() === currentUserId.toString())
+    ) {
+      return true;
+    }
+    // Match by author name if created under this account
+    if (post.author && currentUser.name) {
+      return post.author.toLowerCase().trim() === currentUser.name.toLowerCase().trim();
+    }
+    return false;
+  };
+
+  // Delete permission: Author OR Platform Admin
+  const canDeletePost = (post) => {
+    if (!currentUser || !post) return false;
+    if (currentUser.role === 'admin') return true;
+    return isAuthorOfPost(post);
+  };
+
   const getDisplayAuthor = (post) => {
     if (post.author && post.author.trim() !== '' && post.author !== 'Anonymous') {
       return post.author;
     }
-    if (currentUser) {
+    if (currentUser && isAuthorOfPost(post)) {
       return currentUser.name;
     }
-    return 'Author';
+    return post.author || 'Author';
   };
 
   const fetchPosts = async () => {
@@ -129,13 +152,13 @@ export default function App() {
       if (Array.isArray(res.data)) {
         const sanitized = res.data.map((p) => ({
           ...p,
-          views: typeof p.views === 'number' ? p.views : 0
+          views: Number(p.views) >= 0 ? Number(p.views) : 0
         }));
         setPosts(sanitized);
         localStorage.setItem('mern_cached_posts', JSON.stringify(sanitized));
       }
     } catch (err) {
-      console.warn('Backend unavailable, fallback to cache if available.');
+      console.warn('Backend unavailable, checking cache.');
       const cached = localStorage.getItem('mern_cached_posts');
       if (cached) {
         setPosts(JSON.parse(cached));
@@ -149,22 +172,7 @@ export default function App() {
     fetchPosts();
   }, []);
 
-  // One-click Auto-Fix: If logged in, automatically claim all legacy "Anonymous" posts in DB
-  useEffect(() => {
-    if (currentUser && currentUser.name) {
-      axios
-        .patch(`${API_URL}/claim-all-anonymous`, {}, { headers: getAuthHeader() })
-        .then((res) => {
-          if (Array.isArray(res.data)) {
-            setPosts(res.data);
-            localStorage.setItem('mern_cached_posts', JSON.stringify(res.data));
-          }
-        })
-        .catch(() => {});
-    }
-  }, [currentUser]);
-
-  // Listen for Admin Gateway shortcut: Ctrl + Shift + A or Hash #admin-portal
+  // Admin Gateway Shortcut: Ctrl + Shift + A or Hash #admin-portal
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a') {
@@ -238,7 +246,7 @@ export default function App() {
   };
 
   const openReadingModal = async (post) => {
-    const currentCount = typeof post.views === 'number' ? post.views : 0;
+    const currentCount = Number(post.views) >= 0 ? Number(post.views) : 0;
     const nextCount = currentCount + 1;
 
     setReadingPost({ ...post, views: nextCount });
@@ -255,7 +263,7 @@ export default function App() {
     try {
       const res = await axios.patch(`${API_URL}/${post._id}/view`);
       if (res.data && typeof res.data.views === 'number') {
-        const confirmedViews = res.data.views;
+        const confirmedViews = Number(res.data.views);
         setReadingPost((prev) => (prev && prev._id === post._id ? { ...prev, views: confirmedViews } : prev));
         setPosts((prevPosts) => {
           const synced = prevPosts.map((p) =>
@@ -266,18 +274,8 @@ export default function App() {
         });
       }
     } catch (err) {
-      console.error('Failed to sync view counter to server:', err);
+      console.error('Failed to sync views counter to MongoDB:', err);
     }
-  };
-
-  const canModifyPost = (post) => {
-    if (!currentUser) return false;
-    if (currentUser.role === 'admin') return true;
-    if (!post.authorId || post.author === 'Anonymous') return true;
-    if (post.authorId && (post.authorId === currentUser.id || post.authorId === currentUser._id)) {
-      return true;
-    }
-    return post.author?.toLowerCase().trim() === currentUser.name?.toLowerCase().trim();
   };
 
   const toggleBookmark = (postId, e) => {
@@ -492,17 +490,17 @@ export default function App() {
     setIsModalOpen(true);
   };
 
+  // Only the creator can trigger edit
   const handleEdit = (post, e) => {
     e.stopPropagation();
-    if (!canModifyPost(post)) {
-      showAlert('Access Denied', 'Only the author or an admin can edit this article.', 'danger');
+    if (!isAuthorOfPost(post)) {
+      showAlert('Access Denied', 'Only the author who created this article can edit it.', 'danger');
       return;
     }
     setEditId(post._id);
     setFormData({
       title: post.title,
-      // If author was "Anonymous", immediately re-assign to currentUser
-      author: (!post.author || post.author === 'Anonymous') ? currentUser.name : post.author,
+      author: post.author || currentUser.name,
       category: post.category || '',
       imageUrl: post.imageUrl || '',
       content: post.content,
@@ -530,7 +528,10 @@ export default function App() {
         const res = await axios.put(`${API_URL}/${editId}`, payload, {
           headers: getAuthHeader()
         });
-        const updatedPost = res.data;
+        const updatedPost = {
+          ...res.data,
+          views: Number(res.data.views) >= 0 ? Number(res.data.views) : 0
+        };
 
         setPosts((prevPosts) => {
           const updated = prevPosts.map((p) => (p._id === editId ? updatedPost : p));
@@ -544,7 +545,10 @@ export default function App() {
         const res = await axios.post(API_URL, payload, {
           headers: getAuthHeader()
         });
-        const createdPost = res.data;
+        const createdPost = {
+          ...res.data,
+          views: Number(res.data.views) >= 0 ? Number(res.data.views) : 0
+        };
 
         setPosts((prevPosts) => {
           const updated = [createdPost, ...prevPosts];
@@ -573,7 +577,7 @@ export default function App() {
 
   const promptDelete = (post, e) => {
     e.stopPropagation();
-    if (!canModifyPost(post)) {
+    if (!canDeletePost(post)) {
       showAlert('Access Denied', 'Only the author or an admin can delete this article.', 'danger');
       return;
     }
@@ -737,7 +741,7 @@ export default function App() {
 
   const filteredPosts = posts
     .filter((post) => {
-      if (post.status === 'draft' && !canModifyPost(post)) {
+      if (post.status === 'draft' && !isAuthorOfPost(post) && currentUser?.role !== 'admin') {
         return false;
       }
 
@@ -757,7 +761,7 @@ export default function App() {
       return matchesSearch && matchesCategory;
     })
     .sort((a, b) => {
-      if (sortBy === 'mostViewed') return (b.views || 0) - (a.views || 0);
+      if (sortBy === 'mostViewed') return (Number(b.views) || 0) - (Number(a.views) || 0);
       if (sortBy === 'oldest') return new Date(a.createdAt || 0) - new Date(b.createdAt || 0);
       return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
     });
@@ -885,7 +889,8 @@ export default function App() {
           ) : (
             filteredPosts.map((post, idx) => {
               const isAdmin = currentUser?.role === 'admin';
-              const hasModAccess = canModifyPost(post);
+              const isAuthor = isAuthorOfPost(post);
+              const hasDeleteRights = canDeletePost(post);
               const isLiked = likedPosts.includes(post._id);
               const isSaved = bookmarkedPostIds.includes(post._id);
               const displayLikes = typeof post.likes === 'number' ? post.likes : (post.claps || 0);
@@ -908,11 +913,11 @@ export default function App() {
                       className="card-img"
                     />
 
-                    <div className="views-badge" title={`${post.views || 0} views`}>
+                    <div className="views-badge" title={`${Number(post.views) || 0} views`}>
                       <svg viewBox="0 0 24 24">
                         <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
                       </svg>
-                      <span>{post.views || 0}</span>
+                      <span>{Number(post.views) || 0}</span>
                     </div>
                   </div>
 
@@ -959,23 +964,26 @@ export default function App() {
                           <span>{displayLikes}</span>
                         </button>
 
-                        {hasModAccess && (
-                          <>
-                            <button
-                              className="btn-sm"
-                              title="Edit article"
-                              onClick={(e) => handleEdit(post, e)}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              className="btn-sm delete"
-                              title={isAdmin ? "Delete as Admin" : "Delete article"}
-                              onClick={(e) => promptDelete(post, e)}
-                            >
-                              {isAdmin && post.authorId !== currentUser.id ? '🛡️ Admin Delete' : 'Delete'}
-                            </button>
-                          </>
+                        {/* EDIT BUTTON: STRICTLY VISIBLE ONLY TO THE AUTHOR WHO CREATED IT */}
+                        {isAuthor && (
+                          <button
+                            className="btn-sm"
+                            title="Edit your article"
+                            onClick={(e) => handleEdit(post, e)}
+                          >
+                            Edit
+                          </button>
+                        )}
+
+                        {/* DELETE BUTTON: Visible to Author, or to Admin as Admin Delete */}
+                        {hasDeleteRights && (
+                          <button
+                            className="btn-sm delete"
+                            title={isAdmin && !isAuthor ? "Delete as Admin" : "Delete article"}
+                            onClick={(e) => promptDelete(post, e)}
+                          >
+                            {isAdmin && !isAuthor ? '🛡️ Admin Delete' : 'Delete'}
+                          </button>
                         )}
                       </div>
                     </div>
@@ -1092,7 +1100,7 @@ export default function App() {
             </h1>
             
             <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '1rem' }}>
-              By <strong>{getDisplayAuthor(readingPost)}</strong> • {readingPost.readTime || 1} min read • 👁️ {readingPost.views || 0} views •{' '}
+              By <strong>{getDisplayAuthor(readingPost)}</strong> • {readingPost.readTime || 1} min read • 👁️ {Number(readingPost.views) || 0} views •{' '}
               {new Date(readingPost.createdAt || Date.now()).toLocaleDateString('en-US', {
                 month: 'long',
                 day: 'numeric',
@@ -1113,7 +1121,7 @@ export default function App() {
                 rel="noreferrer"
               >
                 <svg viewBox="0 0 24 24">
-                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.65 20.52 16.03 20.44 15.9C20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10 11.53 8.5 11.27 7.9C11.03 7.31 10.77 7.39 10.58 7.38C10.41 7.38 10.21 7.37 10 7.37C9.79 7.37 9.53 7.04 9.53 7.04Z" />
+                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.03 20.44 15.9 20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10.88 12.24 10.68 12.24 10.68Z" />
                 </svg>
               </a>
 
@@ -1211,16 +1219,21 @@ export default function App() {
                 </button>
               </div>
 
-              {canModifyPost(readingPost) && (
-                <div style={{ display: 'flex', gap: '0.4rem' }}>
+              {/* READING VIEW ACTIONS */}
+              <div style={{ display: 'flex', gap: '0.4rem' }}>
+                {isAuthorOfPost(readingPost) && (
                   <button className="btn-sm" onClick={(e) => handleEdit(readingPost, e)}>
                     Edit
                   </button>
+                )}
+                {canDeletePost(readingPost) && (
                   <button className="btn-sm delete" onClick={(e) => promptDelete(readingPost, e)}>
-                    {currentUser?.role === 'admin' && readingPost.authorId !== currentUser.id ? '🛡️ Admin Delete' : 'Delete'}
+                    {currentUser?.role === 'admin' && !isAuthorOfPost(readingPost)
+                      ? '🛡️ Admin Delete'
+                      : 'Delete'}
                   </button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
             {/* Creative Discussion & Threaded Comments Section */}
@@ -1287,7 +1300,7 @@ export default function App() {
                         (currentUser.name?.toLowerCase().trim() === parent.author?.toLowerCase().trim() ||
                           (parent.authorId && (parent.authorId === currentUser.id || parent.authorId === currentUser._id)) ||
                           currentUser.role === 'admin' ||
-                          canModifyPost(readingPost));
+                          isAuthorOfPost(readingPost));
 
                       return (
                         <div key={parent._id} className="comment-node">
@@ -1348,7 +1361,7 @@ export default function App() {
                                 (currentUser.name?.toLowerCase().trim() === reply.author?.toLowerCase().trim() ||
                                   (reply.authorId && (reply.authorId === currentUser.id || reply.authorId === currentUser._id)) ||
                                   currentUser.role === 'admin' ||
-                                  canModifyPost(readingPost));
+                                  isAuthorOfPost(readingPost));
 
                               return (
                                 <div key={reply._id} className="creative-comment is-reply">
@@ -1564,7 +1577,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 10. Authentication Modal (CLEAN REAL-WORLD FORM) */}
+      {/* 10. Authentication Modal */}
       {isAuthModalOpen && (
         <div className="modal-overlay" onClick={() => setIsAuthModalOpen(false)}>
           <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
