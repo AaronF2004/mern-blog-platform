@@ -326,26 +326,53 @@ router.put('/:id', verifyToken, async (req, res) => {
   }
 });
 
-// Delete Post (Author OR Admin)
+// =========================================================================
+// DELETE POST (ADMIN CAN DELETE ANY ARTICLE UNCONDITIONALLY OR AUTHOR)
+// =========================================================================
 router.delete('/:id', verifyToken, async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id);
-    if (!post) return res.status(404).json({ error: 'Post not found' });
+    const { id } = req.params;
 
-    const isAuthor = post.authorId && post.authorId.toString() === req.user.id;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: 'Invalid article ID' });
+    }
+
+    const post = await Post.findById(id);
+    if (!post) {
+      return res.status(404).json({ error: 'Article not found or already deleted' });
+    }
+
+    // 1. Check if requester has admin role in token OR directly in DB
+    let isAdmin = req.user && req.user.role === 'admin';
+    if (!isAdmin && req.user && req.user.id && mongoose.Types.ObjectId.isValid(req.user.id)) {
+      const dbUser = await User.findById(req.user.id);
+      if (dbUser && dbUser.role === 'admin') {
+        isAdmin = true;
+      }
+    }
+
+    // 2. Check if requester is the original author
+    const isAuthor = post.authorId && post.authorId.toString() === req.user.id.toString();
     const isLegacyNameMatch =
       !post.authorId && post.author && req.user.name &&
       post.author.toLowerCase().trim() === req.user.name.toLowerCase().trim();
-    const isAdmin = req.user.role === 'admin';
     const isLegacyAnonymous = !post.authorId || post.author === 'Anonymous';
 
-    if (!isAuthor && !isLegacyNameMatch && !isAdmin && !isLegacyAnonymous) {
-      return res.status(403).json({ error: 'Forbidden: Only the author or an admin can delete this article.' });
+    // ADMIN OVERRIDE: Admin can delete ANY post immediately
+    if (isAdmin || isAuthor || isLegacyNameMatch || isLegacyAnonymous) {
+      await Post.findByIdAndDelete(id);
+      return res.json({
+        message: isAdmin
+          ? 'Article permanently removed by Administrator.'
+          : 'Article deleted successfully.'
+      });
     }
 
-    await Post.findByIdAndDelete(req.params.id);
-    return res.json({ message: `Post deleted successfully by ${isAdmin ? 'Admin' : 'Author'}.` });
+    return res.status(403).json({
+      error: 'Forbidden: Only the original author or a platform administrator can delete this article.'
+    });
   } catch (err) {
+    console.error('Delete Post Error:', err);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -379,7 +406,7 @@ router.patch('/:id/like', handleLikeToggle);
 router.patch('/:id/clap', handleLikeToggle);
 
 // ==========================================
-// 6. COMMENTS & REVIEWS (STRICT OWNER ONLY DELETE)
+// 6. COMMENTS & REVIEWS
 // ==========================================
 router.post('/:id/comments', async (req, res) => {
   const { author, authorId, content, parentId } = req.body;
@@ -414,7 +441,6 @@ router.delete('/:postId/comments/:commentId', verifyToken, async (req, res) => {
       return res.status(404).json({ message: 'Comment not found.' });
     }
 
-    // STRICT CHECK: Matches the comment creator's ObjectId or user's exact name
     const isCommentAuthorById =
       targetComment.authorId && targetComment.authorId.toString() === req.user.id.toString();
     const isCommentAuthorByName =
@@ -427,7 +453,6 @@ router.delete('/:postId/comments/:commentId', verifyToken, async (req, res) => {
       });
     }
 
-    // Collect target comment and any child replies
     const idsToDelete = new Set([commentId.toString()]);
     let added = true;
     while (added) {

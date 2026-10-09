@@ -143,7 +143,7 @@ export default function App() {
     return false;
   };
 
-  // Post Delete permission: Author OR Platform Admin
+  // Delete permission: PLATFORM ADMIN CAN DELETE ANY ARTICLE UNCONDITIONALLY, or Author
   const canDeletePost = (post) => {
     if (!currentUser || !post) return false;
     if (currentUser.role === 'admin') return true;
@@ -590,31 +590,45 @@ export default function App() {
   };
 
   const promptDelete = (post, e) => {
-    e.stopPropagation();
+    if (e) e.stopPropagation();
     if (!canDeletePost(post)) {
-      showAlert('Access Denied', 'Only the author or an admin can delete this article.', 'danger');
+      showAlert('Access Denied', 'Only the original author or an admin can delete this article.', 'danger');
       return;
     }
     setDeleteTargetId(post._id);
   };
 
+  // ADMIN OR AUTHOR DELETE HANDLER
   const confirmDelete = async (e) => {
     if (e) e.stopPropagation();
     if (!deleteTargetId) return;
+
     try {
-      await axios.delete(`${API_URL}/${deleteTargetId}`, {
+      const res = await axios.delete(`${API_URL}/${deleteTargetId}`, {
         headers: getAuthHeader()
       });
 
       const updated = posts.filter((p) => p._id !== deleteTargetId);
       setPosts(updated);
       localStorage.setItem('mern_cached_posts', JSON.stringify(updated));
-      if (readingPost && readingPost._id === deleteTargetId) setReadingPost(null);
+
+      if (readingPost && readingPost._id === deleteTargetId) {
+        setReadingPost(null);
+      }
+
       setDeleteTargetId(null);
-      showAlert('Article Deleted', 'The article has been permanently removed by authorized user.', 'danger');
+      showAlert(
+        'Article Deleted',
+        res.data?.message || 'The article was permanently removed from the platform.',
+        'danger'
+      );
     } catch (err) {
       console.error('Error deleting post:', err);
-      showAlert('Delete Failed', err.response?.data?.error || 'Could not delete the post.', 'danger');
+      showAlert(
+        'Delete Failed',
+        err.response?.data?.error || err.response?.data?.message || 'Could not delete the post.',
+        'danger'
+      );
       setDeleteTargetId(null);
     }
   };
@@ -993,7 +1007,7 @@ export default function App() {
                           </button>
                         )}
 
-                        {/* DELETE BUTTON: Visible to Author, or to Admin */}
+                        {/* DELETE BUTTON: Visible to Author, OR to Admin (as Admin Delete) */}
                         {hasDeleteRights && (
                           <button
                             className="btn-sm delete"
@@ -1015,13 +1029,13 @@ export default function App() {
 
       {/* 6. Centered Delete Article Confirmation Popup */}
       {deleteTargetId && (
-        <div className="modal-overlay" onClick={() => setDeleteTargetId(null)}>
+        <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={() => setDeleteTargetId(null)}>
           <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
             <div className="confirm-icon">!</div>
             <h3>Delete Article?</h3>
             <p>
               {currentUser?.role === 'admin'
-                ? 'As an Admin, this will permanently remove this article from the entire platform.'
+                ? 'As an Administrator, this action will permanently remove this article from the platform.'
                 : 'Are you sure you want to permanently delete your article? This cannot be undone.'}
             </p>
             <div className="confirm-actions">
@@ -1048,7 +1062,7 @@ export default function App() {
       {deleteCommentTargetId && (
         <div
           className="modal-overlay"
-          style={{ zIndex: 120 }}
+          style={{ zIndex: 9999 }}
           onClick={() => setDeleteCommentTargetId(null)}
         >
           <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
@@ -1139,7 +1153,7 @@ export default function App() {
                 rel="noreferrer"
               >
                 <svg viewBox="0 0 24 24">
-                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.65 20.52 16.03 20.44 15.9C20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10.88 12.24 10.68 12.24 10.68Z" />
+                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.03 20.44 15.9C20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10.88 12.24 10.68 12.24 10.68Z" />
                 </svg>
               </a>
 
@@ -1313,7 +1327,6 @@ export default function App() {
                   readingPost.comments
                     ?.filter((c) => !c.parentId)
                     .map((parent) => {
-                      // STRICT REVIEW OWNER ACCESS ONLY
                       const canDeleteReview = isAuthorOfComment(parent);
 
                       return (
@@ -1349,7 +1362,6 @@ export default function App() {
                                   Reply
                                 </button>
 
-                                {/* STRICTLY VISIBLE ONLY TO THE USER WHO CREATED THE REVIEW */}
                                 {canDeleteReview && (
                                   <button
                                     type="button"
@@ -1371,7 +1383,6 @@ export default function App() {
                           {readingPost.comments
                             ?.filter((c) => c.parentId === parent._id)
                             .map((reply) => {
-                              // STRICT REPLY OWNER ACCESS ONLY
                               const canDeleteReply = isAuthorOfComment(reply);
 
                               return (
@@ -1409,7 +1420,6 @@ export default function App() {
                                         Reply
                                       </button>
 
-                                      {/* STRICTLY VISIBLE ONLY TO THE USER WHO CREATED THE REPLY */}
                                       {canDeleteReply && (
                                         <button
                                           type="button"
