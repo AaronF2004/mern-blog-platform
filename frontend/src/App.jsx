@@ -31,15 +31,15 @@ export default function App() {
   const [readingPost, setReadingPost] = useState(null);
   const [editId, setEditId] = useState(null);
 
-  // Status & Confirmation Dialogs
+  // Status & Modal Popups
   const [deleteTargetId, setDeleteTargetId] = useState(null);
   const [deleteCommentTargetId, setDeleteCommentTargetId] = useState(null);
   const [centerAlert, setCenterAlert] = useState(null);
 
-  // Drag and Drop
+  // Drag and Drop State
   const [isDragging, setIsDragging] = useState(false);
 
-  // Authentication State
+  // Authentication State & User Dropdown
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const saved = localStorage.getItem('devpress_user');
@@ -48,6 +48,9 @@ export default function App() {
       return null;
     }
   });
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const userMenuRef = useRef(null);
+
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isLoginView, setIsLoginView] = useState(true);
   const [authError, setAuthError] = useState('');
@@ -58,7 +61,7 @@ export default function App() {
   const [isAdminPortalOpen, setIsAdminPortalOpen] = useState(false);
   const [adminPortalKey, setAdminPortalKey] = useState('');
 
-  // Liked & Bookmarked
+  // Liked Posts Tracker
   const [likedPosts, setLikedPosts] = useState(() => {
     try {
       const saved = localStorage.getItem('devpress_liked');
@@ -68,6 +71,7 @@ export default function App() {
     }
   });
 
+  // Bookmarked Posts Tracker
   const [bookmarkedPostIds, setBookmarkedPostIds] = useState(() => {
     try {
       const saved = localStorage.getItem('devpress_bookmarks');
@@ -81,7 +85,7 @@ export default function App() {
   const [scrollProgress, setScrollProgress] = useState(0);
   const articleModalRef = useRef(null);
 
-  // Form State
+  // Post Form State
   const [formData, setFormData] = useState({
     title: '',
     author: '',
@@ -110,7 +114,6 @@ export default function App() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
-  // Helper to sync URL hash for browser history back navigation
   const setHash = (hash) => {
     if (window.location.hash !== hash) {
       window.location.hash = hash;
@@ -123,7 +126,17 @@ export default function App() {
     }
   };
 
-  // Strictly checks whether the current logged-in user created the post
+  // Close profile avatar menu on outside click
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) {
+        setIsUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const isAuthorOfPost = (post) => {
     if (!currentUser || !post) return false;
     const currentUserId = currentUser.id || currentUser._id;
@@ -139,7 +152,6 @@ export default function App() {
     return false;
   };
 
-  // Strictly checks whether the current user authored the review
   const isAuthorOfComment = (comment) => {
     if (!currentUser || !comment) return false;
     const currentUserId = currentUser.id || currentUser._id;
@@ -155,7 +167,6 @@ export default function App() {
     return false;
   };
 
-  // Delete permission: Platform Admin can delete any article, or original author
   const canDeletePost = (post) => {
     if (!currentUser || !post) return false;
     if (currentUser.role === 'admin') return true;
@@ -172,7 +183,6 @@ export default function App() {
     return post.author || 'Author';
   };
 
-  // Always refresh latest posts from server
   const fetchPosts = async () => {
     try {
       setLoading(true);
@@ -200,7 +210,7 @@ export default function App() {
     return [];
   };
 
-  // Handle URL Hash navigation and browser back/forward buttons
+  // URL Hash Navigation Routing
   useEffect(() => {
     const handleRouteFromHash = async (postList) => {
       const hash = window.location.hash;
@@ -239,7 +249,6 @@ export default function App() {
         return;
       }
 
-      // Check if hash matches an article ID or slug
       const identifier = hash.replace('#', '');
       const list = postList || posts;
       let matched = list.find((p) => p._id === identifier || p.slug === identifier);
@@ -251,7 +260,6 @@ export default function App() {
             matched = res.data;
           }
         } catch {
-          // If not found, reset hash
           clearHash();
         }
       }
@@ -277,7 +285,7 @@ export default function App() {
     };
   }, []);
 
-  // Keyboard shortcut Ctrl + Shift + A for Admin Gateway
+  // Keyboard shortcut Ctrl + Shift + A
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a') {
@@ -293,7 +301,7 @@ export default function App() {
     };
   }, []);
 
-  // Modal scroll lock
+  // Modal Scroll Lock
   useEffect(() => {
     if (
       readingPost ||
@@ -321,7 +329,6 @@ export default function App() {
     isAdminPortalOpen
   ]);
 
-  // Syntax highlighting for code blocks in articles
   useEffect(() => {
     if (readingPost) {
       setTimeout(() => {
@@ -341,7 +348,6 @@ export default function App() {
     }
   };
 
-  // Open reading modal and record browser history entry so Back button works step-by-step
   const openReadingModal = async (post) => {
     const currentCount = Number(post.views) >= 0 ? Number(post.views) : 0;
     const nextCount = currentCount + 1;
@@ -435,7 +441,7 @@ export default function App() {
           `Signed in as ${res.data.user.name}.`,
           'success'
         );
-        fetchPosts(); // Refresh articles for role permissions
+        fetchPosts();
       }
     } catch (err) {
       setAuthError(err.response?.data?.message || 'Authentication failed. Please verify credentials.');
@@ -480,6 +486,7 @@ export default function App() {
     localStorage.removeItem('devpress_token');
     localStorage.removeItem('devpress_user');
     setCurrentUser(null);
+    setIsUserMenuOpen(false);
     clearHash();
     showAlert('Signed Out', 'You have been logged out.', 'danger');
     fetchPosts();
@@ -623,7 +630,6 @@ export default function App() {
     setIsModalOpen(true);
   };
 
-  // Submit and immediately refresh all posts from backend
   const handleSubmit = async (targetStatus = 'published', e) => {
     if (e) e.preventDefault();
     const finalCategory = formData.category.trim() || 'Information Technology';
@@ -681,7 +687,6 @@ export default function App() {
     setDeleteTargetId(post._id);
   };
 
-  // Confirm delete and immediately re-sync data
   const confirmDelete = async (e) => {
     if (e) e.stopPropagation();
     if (!deleteTargetId) return;
@@ -895,9 +900,10 @@ export default function App() {
         </div>
       )}
 
-      {/* 2. Top Navbar */}
+      {/* 2. Top Navbar with Bigger Logo & User Avatar Dropdown at Right */}
       <header className="navbar">
         <div className="nav-container">
+          {/* Bigger Logo Branding */}
           <div
             className="logo"
             onClick={() => {
@@ -907,25 +913,19 @@ export default function App() {
               fetchPosts();
             }}
           >
-            Dev<span>Press</span>
+            <span className="logo-icon">📰</span>
+            <span className="logo-text">Dev<span>Press</span></span>
           </div>
+
+          {/* Action Row: + Write on left, Sign In outside, Human Icon on far right */}
           <div className="auth-actions">
-            {currentUser ? (
-              <>
-                <span
-                  className="user-badge"
-                  style={currentUser.role === 'admin' ? { background: '#fee2e2', color: '#dc2626', borderColor: '#fca5a5' } : {}}
-                  title={currentUser.role === 'admin' ? "Platform Administrator" : "Author Account"}
-                >
-                  {currentUser.role === 'admin' ? '🛡️ Admin' : `👤 ${currentUser.name}`}
-                </span>
-                <button className="btn-sm" onClick={handleLogout}>
-                  Logout
-                </button>
-              </>
-            ) : (
+            <button className="btn-primary write-btn" onClick={openCreateModal}>
+              + Write
+            </button>
+
+            {!currentUser ? (
               <button
-                className="btn-sm"
+                className="btn-sm sign-in-btn"
                 onClick={() => {
                   setAuthError('');
                   setHash('#auth');
@@ -934,10 +934,42 @@ export default function App() {
               >
                 Sign In
               </button>
+            ) : (
+              <div className="user-profile-menu-container" ref={userMenuRef}>
+                <button
+                  type="button"
+                  className={`user-avatar-btn ${currentUser.role === 'admin' ? 'admin-avatar' : ''}`}
+                  onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+                  title="My Account"
+                >
+                  <svg viewBox="0 0 24 24" className="human-icon-svg">
+                    <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                  </svg>
+                </button>
+
+                {isUserMenuOpen && (
+                  <div className="user-dropdown-popover">
+                    <div className="dropdown-user-header">
+                      <div className="dropdown-user-name">{currentUser.name}</div>
+                      <div className="dropdown-user-role">
+                        {currentUser.role === 'admin' ? '🛡️ Administrator' : '✍️ Author Account'}
+                      </div>
+                    </div>
+                    <div className="dropdown-divider"></div>
+                    <button
+                      type="button"
+                      className="dropdown-logout-btn"
+                      onClick={handleLogout}
+                    >
+                      <svg viewBox="0 0 24 24" className="logout-icon-svg">
+                        <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z" />
+                      </svg>
+                      <span>Logout</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
-            <button className="btn-primary" onClick={openCreateModal}>
-              + Write
-            </button>
           </div>
         </div>
       </header>
@@ -1049,7 +1081,7 @@ export default function App() {
 
                     <h3 className="card-title">{post.title}</h3>
                     <p className="card-excerpt">{post.content.replace(/<[^>]*>/g, '')}</p>
-                    
+
                     <div className="card-footer">
                       <div className="author-info">
                         <span className="author-name">{displayAuthorName}</span>
@@ -1084,7 +1116,7 @@ export default function App() {
                           <span>{displayLikes}</span>
                         </button>
 
-                        {/* EDIT BUTTON: Visible only to the original author */}
+                        {/* EDIT BUTTON: strictly visible only to author */}
                         {isAuthor && (
                           <button
                             className="btn-sm"
@@ -1095,7 +1127,7 @@ export default function App() {
                           </button>
                         )}
 
-                        {/* DELETE BUTTON: Visible to Author, OR to Admin (as Admin Delete) */}
+                        {/* DELETE BUTTON: visible to author, or to Admin as Admin Delete */}
                         {hasDeleteRights && (
                           <button
                             className="btn-sm delete"
@@ -1179,7 +1211,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 8. Centered Reading View Modal (With clean history step back) */}
+      {/* 8. Centered Reading View Modal */}
       {readingPost && (
         <div className="modal-overlay" onClick={closeReadingModal}>
           <div
@@ -1214,11 +1246,11 @@ export default function App() {
               alt="Article Banner"
               className="article-detail-img"
             />
-            
+
             <h1 style={{ fontSize: '1.65rem', marginBottom: '0.5rem', lineHeight: '1.25' }}>
               {readingPost.title}
             </h1>
-            
+
             <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '1rem' }}>
               By <strong>{getDisplayAuthor(readingPost)}</strong> • {readingPost.readTime || 1} min read • 👁️ {Number(readingPost.views) || 0} views •{' '}
               {new Date(readingPost.createdAt || Date.now()).toLocaleDateString('en-US', {
@@ -1230,7 +1262,7 @@ export default function App() {
 
             <div className="social-share-row">
               <span className="share-label">Share:</span>
-              
+
               <a
                 className="share-icon-btn whatsapp"
                 title="Share on WhatsApp"
@@ -1269,7 +1301,7 @@ export default function App() {
                 rel="noreferrer"
               >
                 <svg viewBox="0 0 24 24">
-                  <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.25c-.95 0-1.72.78-1.72 1.73s.77 1.73 1.72 1.73 1.73-.78 1.73-1.73-.78-1.73-1.73-1.73Z" />
+                  <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.25c-.95 0-1.72.78-1.72 1.73s.77 1.73 1.72 1.73 1.73-.78 1.73-1.73-.78-1.73-1.73Z" />
                 </svg>
               </a>
 
@@ -1553,7 +1585,7 @@ export default function App() {
                 &times;
               </button>
             </div>
-            
+
             <form className="modal-form" onSubmit={(e) => handleSubmit('published', e)}>
               <input
                 name="title"
@@ -1577,7 +1609,6 @@ export default function App() {
                 ))}
               </datalist>
 
-              {/* Native Label Dropzone File Browser */}
               <div className="media-uploader-box">
                 <div className="media-uploader-header">
                   <span className="media-label">Article Cover Visual</span>
@@ -1664,18 +1695,10 @@ export default function App() {
               />
 
               <div className="modal-footer">
-                <button
-                  type="button"
-                  className="btn-sm"
-                  onClick={closeCreateModal}
-                >
+                <button type="button" className="btn-sm" onClick={closeCreateModal}>
                   Cancel
                 </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={(e) => handleSubmit('draft', e)}
-                >
+                <button type="button" className="btn-secondary" onClick={(e) => handleSubmit('draft', e)}>
                   Save Draft
                 </button>
                 <button type="submit" className="btn-primary">

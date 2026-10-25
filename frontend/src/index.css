@@ -1243,3 +1243,225 @@ body {
   }
 }
 
+/* ========================================================
+   MODERN COMPACT NAVBAR & AVATAR USER DROPDOWN
+======================================================== */
+.navbar {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid #e2e8f0;
+  padding: 0.65rem 1.25rem;
+}
+
+.nav-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+/* Bigger DevPress Logo */
+.logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+  user-select: none;
+  text-decoration: none;
+}
+
+.logo-icon {
+  font-size: 1.75rem;
+  line-height: 1;
+}
+
+.logo-text {
+  font-size: 1.7rem;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.03em;
+}
+
+.logo-text span {
+  color: #3b82f6;
+}
+
+/* Nav Actions Row */
+.auth-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.write-btn {
+  padding: 0.45rem 1.1rem !important;
+  font-size: 0.88rem !important;
+  font-weight: 600;
+  border-radius: 999px !important;
+  white-space: nowrap;
+}
+
+.sign-in-btn {
+  padding: 0.45rem 1rem !important;
+  font-size: 0.85rem !important;
+  font-weight: 600;
+  border-radius: 999px !important;
+}
+
+/* Human Icon Avatar Button (Right Corner) */
+.user-profile-menu-container {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.user-avatar-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1.5px solid #cbd5e1;
+  background: #f1f5f9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  padding: 0;
+  color: #475569;
+}
+
+.user-avatar-btn:hover {
+  background: #e2e8f0;
+  border-color: #94a3b8;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.user-avatar-btn.admin-avatar {
+  background: #fee2e2;
+  border-color: #f87171;
+  color: #dc2626;
+}
+
+.human-icon-svg {
+  width: 22px;
+  height: 22px;
+  fill: currentColor;
+}
+
+/* Sleek User Dropdown Menu */
+.user-dropdown-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 210px;
+  background: #ffffff;
+  border-radius: 14px;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 12px 28px -6px rgba(15, 23, 42, 0.15), 0 4px 10px rgba(15, 23, 42, 0.05);
+  padding: 0.65rem 0.6rem;
+  z-index: 1050;
+  animation: slideDropdown 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideDropdown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.dropdown-user-header {
+  padding: 0.4rem 0.65rem 0.5rem;
+}
+
+.dropdown-user-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dropdown-user-role {
+  font-size: 0.75rem;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: #f1f5f9;
+  margin: 0.35rem 0;
+}
+
+.dropdown-logout-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.65rem;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: #dc2626;
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+  text-align: left;
+}
+
+.dropdown-logout-btn:hover {
+  background: #fef2f2;
+}
+
+.logout-icon-svg {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 600px) {
+  .navbar {
+    padding: 0.5rem 0.85rem;
+  }
+
+  .logo-icon {
+    font-size: 1.5rem;
+  }
+
+  .logo-text {
+    font-size: 1.45rem;
+  }
+
+  .auth-actions {
+    gap: 0.5rem;
+  }
+
+  .write-btn {
+    padding: 0.35rem 0.8rem !important;
+    font-size: 0.8rem !important;
+  }
+
+  .user-avatar-btn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .human-icon-svg {
+    width: 20px;
+    height: 20px;
+  }
+}
