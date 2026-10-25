@@ -79,7 +79,6 @@ export default function App() {
 
   // Reading Progress Bar State
   const [scrollProgress, setScrollProgress] = useState(0);
-  const articleModalRef = useRef(null);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -110,7 +109,6 @@ export default function App() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
-  // Helper to sync URL hash for browser history back navigation
   const setHash = (hash) => {
     if (window.location.hash !== hash) {
       window.location.hash = hash;
@@ -123,7 +121,6 @@ export default function App() {
     }
   };
 
-  // Strictly checks whether the current logged-in user created the post
   const isAuthorOfPost = (post) => {
     if (!currentUser || !post) return false;
     const currentUserId = currentUser.id || currentUser._id;
@@ -139,7 +136,6 @@ export default function App() {
     return false;
   };
 
-  // Strictly checks whether the current user authored the review
   const isAuthorOfComment = (comment) => {
     if (!currentUser || !comment) return false;
     const currentUserId = currentUser.id || currentUser._id;
@@ -155,7 +151,6 @@ export default function App() {
     return false;
   };
 
-  // Delete permission: Platform Admin can delete any article, or original author
   const canDeletePost = (post) => {
     if (!currentUser || !post) return false;
     if (currentUser.role === 'admin') return true;
@@ -172,7 +167,6 @@ export default function App() {
     return post.author || 'Author';
   };
 
-  // Always refresh latest posts from server
   const fetchPosts = async () => {
     try {
       setLoading(true);
@@ -200,7 +194,22 @@ export default function App() {
     return [];
   };
 
-  // Handle URL Hash navigation and browser back/forward buttons
+  // Global window scroll progress for full article page
+  useEffect(() => {
+    const handleWindowScroll = () => {
+      if (!readingPost) return;
+      const totalScroll = document.documentElement.scrollHeight - window.innerHeight;
+      if (totalScroll > 0) {
+        const progress = Math.min(100, Math.max(0, (window.scrollY / totalScroll) * 100));
+        setScrollProgress(progress);
+      }
+    };
+
+    window.addEventListener('scroll', handleWindowScroll);
+    return () => window.removeEventListener('scroll', handleWindowScroll);
+  }, [readingPost]);
+
+  // URL Hash navigation routing
   useEffect(() => {
     const handleRouteFromHash = async (postList) => {
       const hash = window.location.hash;
@@ -239,7 +248,6 @@ export default function App() {
         return;
       }
 
-      // Check if hash matches an article ID or slug
       const identifier = hash.replace('#', '');
       const list = postList || posts;
       let matched = list.find((p) => p._id === identifier || p.slug === identifier);
@@ -251,13 +259,13 @@ export default function App() {
             matched = res.data;
           }
         } catch {
-          // If not found, reset hash
           clearHash();
         }
       }
 
       if (matched) {
         setReadingPost(matched);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
         setIsModalOpen(false);
         setIsAuthModalOpen(false);
       }
@@ -277,7 +285,7 @@ export default function App() {
     };
   }, []);
 
-  // Keyboard shortcut Ctrl + Shift + A for Admin Gateway
+  // Keyboard shortcut Ctrl + Shift + A
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a') {
@@ -293,17 +301,9 @@ export default function App() {
     };
   }, []);
 
-  // Modal scroll lock
+  // Modal scroll lock for popups only
   useEffect(() => {
-    if (
-      readingPost ||
-      isModalOpen ||
-      deleteTargetId ||
-      deleteCommentTargetId ||
-      centerAlert ||
-      isAuthModalOpen ||
-      isAdminPortalOpen
-    ) {
+    if (isModalOpen || deleteTargetId || deleteCommentTargetId || centerAlert || isAuthModalOpen || isAdminPortalOpen) {
       document.body.style.overflow = 'hidden';
     } else {
       document.body.style.overflow = 'unset';
@@ -311,17 +311,8 @@ export default function App() {
     return () => {
       document.body.style.overflow = 'unset';
     };
-  }, [
-    readingPost,
-    isModalOpen,
-    deleteTargetId,
-    deleteCommentTargetId,
-    centerAlert,
-    isAuthModalOpen,
-    isAdminPortalOpen
-  ]);
+  }, [isModalOpen, deleteTargetId, deleteCommentTargetId, centerAlert, isAuthModalOpen, isAdminPortalOpen]);
 
-  // Syntax highlighting for code blocks in articles
   useEffect(() => {
     if (readingPost) {
       setTimeout(() => {
@@ -330,24 +321,12 @@ export default function App() {
     }
   }, [readingPost]);
 
-  const handleArticleScroll = () => {
-    if (articleModalRef.current) {
-      const { scrollTop, scrollHeight, clientHeight } = articleModalRef.current;
-      const totalScroll = scrollHeight - clientHeight;
-      if (totalScroll > 0) {
-        const progress = Math.min(100, Math.max(0, (scrollTop / totalScroll) * 100));
-        setScrollProgress(progress);
-      }
-    }
-  };
-
-  // Open reading modal and record browser history entry so Back button works step-by-step
   const openReadingModal = async (post) => {
     const currentCount = Number(post.views) >= 0 ? Number(post.views) : 0;
     const nextCount = currentCount + 1;
 
     setReadingPost({ ...post, views: nextCount });
-    setScrollProgress(0);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
     setHash(`#${post.slug || post._id}`);
 
     setPosts((prevPosts) => {
@@ -379,6 +358,7 @@ export default function App() {
   const closeReadingModal = () => {
     setReadingPost(null);
     clearHash();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const toggleBookmark = (postId, e) => {
@@ -435,7 +415,7 @@ export default function App() {
           `Signed in as ${res.data.user.name}.`,
           'success'
         );
-        fetchPosts(); // Refresh articles for role permissions
+        fetchPosts();
       }
     } catch (err) {
       setAuthError(err.response?.data?.message || 'Authentication failed. Please verify credentials.');
@@ -623,7 +603,6 @@ export default function App() {
     setIsModalOpen(true);
   };
 
-  // Submit and immediately refresh all posts from backend
   const handleSubmit = async (targetStatus = 'published', e) => {
     if (e) e.preventDefault();
     const finalCategory = formData.category.trim() || 'Information Technology';
@@ -673,7 +652,7 @@ export default function App() {
   };
 
   const promptDelete = (post, e) => {
-    e.stopPropagation();
+    if (e) e.stopPropagation();
     if (!canDeletePost(post)) {
       showAlert('Access Denied', 'Only the original author or an admin can delete this article.', 'danger');
       return;
@@ -681,7 +660,6 @@ export default function App() {
     setDeleteTargetId(post._id);
   };
 
-  // Confirm delete and immediately re-sync data
   const confirmDelete = async (e) => {
     if (e) e.stopPropagation();
     if (!deleteTargetId) return;
@@ -878,8 +856,15 @@ export default function App() {
     });
 
   return (
-    <div>
-      {/* 1. Centered Status Dialog */}
+    <div className="app-container">
+      {/* 1. Global Reading Progress Bar */}
+      {readingPost && (
+        <div className="global-progress-bar-track">
+          <div className="global-progress-bar-fill" style={{ width: `${scrollProgress}%` }} />
+        </div>
+      )}
+
+      {/* 2. Centered Status Dialog */}
       {centerAlert && (
         <div className="center-toast-overlay" onClick={closeAlert}>
           <div className="center-toast-box" onClick={(e) => e.stopPropagation()}>
@@ -895,7 +880,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 2. Top Navbar */}
+      {/* 3. Top Navbar */}
       <header className="navbar">
         <div className="nav-container">
           <div
@@ -942,309 +927,86 @@ export default function App() {
         </div>
       </header>
 
-      {/* 3. Hero, Search & Sort Filter */}
-      <section className="hero">
-        <div>
-          <h2>Articles & Editorial</h2>
-          <p>Insights, industry news, and guides</p>
-        </div>
-
-        <div className="hero-controls">
-          <input
-            type="text"
-            className="search-input"
-            placeholder="Search articles..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-
-          <select
-            className="sort-select"
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value)}
-          >
-            <option value="newest">📅 Newest</option>
-            <option value="oldest">⏳ Oldest</option>
-            <option value="mostViewed">🔥 Most Viewed</option>
-          </select>
-        </div>
-      </section>
-
-      {/* 4. Category Filter Chips */}
-      <div className="category-chips-wrapper">
-        <div className="category-chips">
-          <button
-            className={`chip saved-chip ${selectedCategory === 'Bookmarks' ? 'active' : ''}`}
-            onClick={() => setSelectedCategory('Bookmarks')}
-          >
-            🔖 Bookmarks ({bookmarkedPostIds.length})
-          </button>
-
-          {PRESET_CATEGORIES.map((cat) => (
-            <button
-              key={cat}
-              className={`chip ${selectedCategory === cat ? 'active' : ''}`}
-              onClick={() => setSelectedCategory(cat)}
-            >
-              {cat}
+      {/* 4. CONDITIONAL VIEW: FULL EDITORIAL ARTICLE PAGE (IMAGE 1 STYLE) VS HOME FEED */}
+      {readingPost ? (
+        <main className="editorial-page-view">
+          {/* Back Navigation Bar */}
+          <div className="editorial-nav-bar">
+            <button className="btn-back-crumb" onClick={closeReadingModal}>
+              ← Back to articles
             </button>
-          ))}
-        </div>
-      </div>
-
-      {/* 5. Synchronized Grid or Loading Spinner */}
-      {loading ? (
-        <div className="loading-container">
-          <div className="spinner"></div>
-          <p>Loading articles...</p>
-        </div>
-      ) : (
-        <main className="posts-grid">
-          {filteredPosts.length === 0 ? (
-            <p style={{ color: '#94a3b8', gridColumn: '1 / -1', padding: '3rem 0', textAlign: 'center' }}>
-              {selectedCategory === 'Bookmarks'
-                ? 'You have not saved any articles yet. Click the ribbon icon on any post to bookmark it!'
-                : 'No articles found matching your criteria.'}
-            </p>
-          ) : (
-            filteredPosts.map((post, idx) => {
-              const isAdmin = currentUser?.role === 'admin';
-              const isAuthor = isAuthorOfPost(post);
-              const hasDeleteRights = canDeletePost(post);
-              const isLiked = likedPosts.includes(post._id);
-              const isSaved = bookmarkedPostIds.includes(post._id);
-              const displayLikes = typeof post.likes === 'number' ? post.likes : (post.claps || 0);
-              const displayAuthorName = getDisplayAuthor(post);
-
-              return (
-                <article
-                  key={post._id || idx}
-                  className="card"
-                  onClick={() => openReadingModal(post)}
-                >
-                  <div className="card-img-wrapper">
-                    <img
-                      src={
-                        post.imageUrl && post.imageUrl.trim() !== ''
-                          ? post.imageUrl
-                          : `https://picsum.photos/seed/${post._id || idx}/700/400`
-                      }
-                      alt="Banner"
-                      className="card-img"
-                    />
-
-                    <div className="views-badge" title={`${Number(post.views) || 0} views`}>
-                      <svg viewBox="0 0 24 24">
-                        <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
-                      </svg>
-                      <span>{Number(post.views) || 0}</span>
-                    </div>
-                  </div>
-
-                  <div className="card-body">
-                    <div className="card-tag-row">
-                      <span className="card-tag">{post.category || 'General'}</span>
-                      {post.status === 'draft' && <span className="draft-badge">Draft</span>}
-                    </div>
-
-                    <h3 className="card-title">{post.title}</h3>
-                    <p className="card-excerpt">{post.content.replace(/<[^>]*>/g, '')}</p>
-                    
-                    <div className="card-footer">
-                      <div className="author-info">
-                        <span className="author-name">{displayAuthorName}</span>
-                        <span className="post-date">
-                          {post.readTime || 1} min read •{' '}
-                          {new Date(post.createdAt || Date.now()).toLocaleDateString('en-US', {
-                            month: 'short',
-                            day: 'numeric'
-                          })}
-                        </span>
-                      </div>
-
-                      <div className="actions">
-                        <button
-                          className={`btn-bookmark ${isSaved ? 'bookmarked' : ''}`}
-                          title={isSaved ? 'Remove Bookmark' : 'Save for Later'}
-                          onClick={(e) => toggleBookmark(post._id, e)}
-                        >
-                          <svg viewBox="0 0 24 24">
-                            <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" />
-                          </svg>
-                        </button>
-
-                        <button
-                          className={`wp-clap-pill ${isLiked ? 'clapped' : ''}`}
-                          title={isLiked ? 'Unlike' : 'Like'}
-                          onClick={(e) => handleLikeToggle(post._id, e)}
-                        >
-                          <svg viewBox="0 0 24 24">
-                            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                          </svg>
-                          <span>{displayLikes}</span>
-                        </button>
-
-                        {/* EDIT BUTTON: Visible only to the original author */}
-                        {isAuthor && (
-                          <button
-                            className="btn-sm"
-                            title="Edit your article"
-                            onClick={(e) => handleEdit(post, e)}
-                          >
-                            Edit
-                          </button>
-                        )}
-
-                        {/* DELETE BUTTON: Visible to Author, OR to Admin (as Admin Delete) */}
-                        {hasDeleteRights && (
-                          <button
-                            className="btn-sm delete"
-                            title={isAdmin && !isAuthor ? "Delete as Admin" : "Delete article"}
-                            onClick={(e) => promptDelete(post, e)}
-                          >
-                            {isAdmin && !isAuthor ? '🛡️ Admin Delete' : 'Delete'}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </article>
-              );
-            })
-          )}
-        </main>
-      )}
-
-      {/* 6. Centered Delete Article Confirmation Popup */}
-      {deleteTargetId && (
-        <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={() => setDeleteTargetId(null)}>
-          <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-icon">!</div>
-            <h3>Delete Article?</h3>
-            <p>
-              {currentUser?.role === 'admin'
-                ? 'As an Administrator, this action will permanently remove this article from the platform.'
-                : 'Are you sure you want to permanently delete your article? This cannot be undone.'}
-            </p>
-            <div className="confirm-actions">
+            <div className="editorial-nav-right">
+              <span className="editorial-category-chip">{readingPost.category || 'Lifestyle'}</span>
               <button
-                type="button"
-                className="btn-sm"
-                onClick={() => setDeleteTargetId(null)}
+                className={`btn-bookmark-round ${bookmarkedPostIds.includes(readingPost._id) ? 'bookmarked' : ''}`}
+                onClick={(e) => toggleBookmark(readingPost._id, e)}
+                title="Bookmark article"
               >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn-danger"
-                onClick={confirmDelete}
-              >
-                Yes, Delete
+                <svg viewBox="0 0 24 24">
+                  <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" />
+                </svg>
               </button>
             </div>
           </div>
-        </div>
-      )}
 
-      {/* 7. Centered Delete Comment Confirmation Popup */}
-      {deleteCommentTargetId && (
-        <div
-          className="modal-overlay"
-          style={{ zIndex: 9999 }}
-          onClick={() => setDeleteCommentTargetId(null)}
-        >
-          <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
-            <div className="confirm-icon">!</div>
-            <h3>Delete Review?</h3>
-            <p>
-              Are you sure you want to delete your review? Any replies attached to this discussion will also be removed.
-            </p>
-            <div className="confirm-actions">
-              <button
-                type="button"
-                className="btn-sm"
-                onClick={() => setDeleteCommentTargetId(null)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="btn-danger"
-                onClick={confirmDeleteComment}
-              >
-                Yes, Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 8. Centered Reading View Modal (With clean history step back) */}
-      {readingPost && (
-        <div className="modal-overlay" onClick={closeReadingModal}>
-          <div
-            className="modal-content"
-            ref={articleModalRef}
-            onScroll={handleArticleScroll}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="reading-progress-track">
-              <div
-                className="reading-progress-fill"
-                style={{ width: `${scrollProgress}%` }}
-              />
-            </div>
-
-            <div className="modal-header">
-              <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
-                <span className="card-tag">{readingPost.category || 'General'}</span>
-                {readingPost.status === 'draft' && <span className="draft-badge">Draft</span>}
-              </div>
-              <button className="close-btn" onClick={closeReadingModal}>
-                &times;
-              </button>
-            </div>
-
-            <img
-              src={
-                readingPost.imageUrl && readingPost.imageUrl.trim() !== ''
-                  ? readingPost.imageUrl
-                  : `https://picsum.photos/seed/${readingPost._id}/900/500`
-              }
-              alt="Article Banner"
-              className="article-detail-img"
-            />
-            
-            <h1 style={{ fontSize: '1.65rem', marginBottom: '0.5rem', lineHeight: '1.25' }}>
-              {readingPost.title}
-            </h1>
-            
-            <p style={{ color: '#64748b', fontSize: '0.85rem', marginBottom: '1rem' }}>
-              By <strong>{getDisplayAuthor(readingPost)}</strong> • {readingPost.readTime || 1} min read • 👁️ {Number(readingPost.views) || 0} views •{' '}
+          {/* Hero Header Block (Centered) */}
+          <header className="editorial-hero-header">
+            <div className="editorial-published-date">
+              Published on{' '}
               {new Date(readingPost.createdAt || Date.now()).toLocaleDateString('en-US', {
                 month: 'long',
                 day: 'numeric',
                 year: 'numeric'
               })}
+            </div>
+
+            <h1 className="editorial-main-title">{readingPost.title}</h1>
+
+            <p className="editorial-sub-title">
+              {readingPost.content ? readingPost.content.replace(/<[^>]*>/g, '').substring(0, 110) + '...' : ''}
             </p>
 
-            <div className="social-share-row">
+            <div className="editorial-author-pill">
+              <span>{getDisplayAuthor(readingPost)}</span>
+            </div>
+          </header>
+
+          {/* Large Hero Image Banner */}
+          <div className="editorial-banner-container">
+            <img
+              src={
+                readingPost.imageUrl && readingPost.imageUrl.trim() !== ''
+                  ? readingPost.imageUrl
+                  : `https://picsum.photos/seed/${readingPost._id}/1400/700`
+              }
+              alt={readingPost.title}
+              className="editorial-banner-img"
+            />
+          </div>
+
+          {/* Meta & Share Row */}
+          <div className="editorial-meta-row">
+            <div className="editorial-metrics">
+              <span>⏳ {readingPost.readTime || 1} min read</span>
+              <span>•</span>
+              <span>👁️ {Number(readingPost.views) || 0} views</span>
+            </div>
+
+            <div className="editorial-share-buttons">
               <span className="share-label">Share:</span>
-              
               <a
                 className="share-icon-btn whatsapp"
                 title="Share on WhatsApp"
                 href={`https://api.whatsapp.com/send?text=${encodeURIComponent(
-                  readingPost.title + ' - Read here: ' + window.location.href
+                  readingPost.title + ' - ' + window.location.href
                 )}`}
                 target="_blank"
                 rel="noreferrer"
               >
                 <svg viewBox="0 0 24 24">
-                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.03 20.44 15.9C20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10.88 12.24 10.68 12.24 10.68Z" />
+                  <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91C2.13 13.66 2.59 15.36 3.45 16.86L2.05 22L7.3 20.62C8.75 21.41 10.38 21.83 12.04 21.83C17.5 21.83 21.95 17.38 21.95 11.92C21.95 9.27 20.92 6.78 19.05 4.91C17.18 3.03 14.69 2 12.04 2M12.05 3.67C14.25 3.67 16.31 4.53 17.87 6.09C19.42 7.65 20.28 9.72 20.28 11.92C20.28 16.46 16.58 20.15 12.04 20.15C10.56 20.15 9.11 19.76 7.85 19L7.55 18.83L4.43 19.65L5.26 16.61L5.06 16.29C4.24 15 3.8 13.47 3.8 11.91C3.81 7.37 7.5 3.67 12.05 3.67M9.53 7.04C9.33 7.04 9 7.12 8.71 7.43C8.42 7.74 7.6 8.5 7.6 10.06C7.6 11.62 8.74 13.12 8.9 13.33C9.06 13.54 11.13 16.73 14.3 18.1C15.06 18.42 15.65 18.62 16.11 18.77C16.87 19.01 17.57 18.97 18.12 18.89C18.73 18.8 20 18.12 20.26 17.39C20.52 16.65 20.52 16.03 20.44 15.9C20.36 15.77 20.16 15.69 19.85 15.54C19.55 15.38 18.06 14.65 17.78 14.55C17.5 14.45 17.3 14.4 17.1 14.71C16.9 15.01 16.32 15.69 16.15 15.9C15.97 16.1 15.8 16.13 15.5 15.98C15.19 15.82 14.21 15.5 13.04 14.46C12.13 13.65 11.52 12.65 11.34 12.35C11.17 12.04 11.32 11.88 11.48 11.72C11.61 11.59 11.78 11.37 11.93 11.19C12.09 11.01 12.14 10.88 12.24 10.68C12.34 10.47 12.29 10.3 12.22 10.15C12.14 10.88 12.24 10.68 12.24 10.68Z" />
                 </svg>
               </a>
-
               <a
                 className="share-icon-btn x-twitter"
                 title="Share on X"
@@ -1258,7 +1020,6 @@ export default function App() {
                   <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
                 </svg>
               </a>
-
               <a
                 className="share-icon-btn linkedin"
                 title="Share on LinkedIn"
@@ -1269,10 +1030,9 @@ export default function App() {
                 rel="noreferrer"
               >
                 <svg viewBox="0 0 24 24">
-                  <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.25c-.95 0-1.72.78-1.72 1.73s.77 1.73 1.72 1.73 1.73-.78 1.73-1.73-.78-1.73-1.73-1.73Z" />
+                  <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.25c-.95 0-1.72.78-1.72 1.73s.77 1.73 1.72 1.73 1.73-.78 1.73-1.73-.78-1.73-1.73Z" />
                 </svg>
               </a>
-
               <button
                 type="button"
                 className="share-btn-copy"
@@ -1285,265 +1045,450 @@ export default function App() {
                 <span>Copy</span>
               </button>
             </div>
+          </div>
 
-            <div className="article-content">
-              {readingPost.content.split('```').map((chunk, index) => {
-                if (index % 2 === 1) {
-                  return (
-                    <div key={index} className="code-block-container">
-                      <button
-                        type="button"
-                        className="btn-copy-code"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigator.clipboard.writeText(chunk.trim());
-                          showAlert('Copied!', 'Code copied to clipboard.');
-                        }}
-                      >
-                        📋 Copy
-                      </button>
-                      <pre className="language-javascript">
-                        <code>{chunk.trim()}</code>
-                      </pre>
-                    </div>
-                  );
-                }
-                return <p key={index}>{chunk}</p>;
-              })}
-            </div>
-
-            <div className="engagement-bar">
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <button
-                  className={`wp-clap-pill ${likedPosts.includes(readingPost._id) ? 'clapped' : ''}`}
-                  title={likedPosts.includes(readingPost._id) ? 'Unlike' : 'Like'}
-                  onClick={(e) => handleLikeToggle(readingPost._id, e)}
-                >
-                  <svg viewBox="0 0 24 24">
-                    <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                  </svg>
-                  <span>
-                    {typeof readingPost.likes === 'number' ? readingPost.likes : (readingPost.claps || 0)}
-                  </span>
-                </button>
-
-                <button
-                  className={`btn-bookmark ${bookmarkedPostIds.includes(readingPost._id) ? 'bookmarked' : ''}`}
-                  onClick={(e) => toggleBookmark(readingPost._id, e)}
-                  title="Bookmark Article"
-                  style={{ width: '36px', height: '36px' }}
-                >
-                  <svg viewBox="0 0 24 24">
-                    <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" />
-                  </svg>
-                </button>
-              </div>
-
-              {/* Reading View Actions */}
-              <div style={{ display: 'flex', gap: '0.4rem' }}>
-                {isAuthorOfPost(readingPost) && (
-                  <button className="btn-sm" onClick={(e) => handleEdit(readingPost, e)}>
-                    Edit
-                  </button>
-                )}
-                {canDeletePost(readingPost) && (
-                  <button className="btn-sm delete" onClick={(e) => promptDelete(readingPost, e)}>
-                    {currentUser?.role === 'admin' && !isAuthorOfPost(readingPost)
-                      ? '🛡️ Admin Delete'
-                      : 'Delete'}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Creative Discussion & Threaded Reviews Section */}
-            <div className="creative-discussion">
-              <div className="discussion-header">
-                <h3>Discussion</h3>
-                <span className="comment-count-badge">
-                  {readingPost.comments?.length || 0}
-                </span>
-              </div>
-
-              <form onSubmit={handleAddComment} noValidate className="comment-input-card">
-                {replyParentId && (
-                  <div className="reply-badge">
-                    <span>↳ Replying to comment...</span>
-                    <button type="button" onClick={() => setReplyParentId(null)}>
-                      (Cancel)
+          {/* Article Body Content */}
+          <article className="editorial-body-content">
+            {readingPost.content.split('```').map((chunk, index) => {
+              if (index % 2 === 1) {
+                return (
+                  <div key={index} className="code-block-container">
+                    <button
+                      type="button"
+                      className="btn-copy-code"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigator.clipboard.writeText(chunk.trim());
+                        showAlert('Copied!', 'Code copied to clipboard.');
+                      }}
+                    >
+                      📋 Copy
                     </button>
+                    <pre className="language-javascript">
+                      <code>{chunk.trim()}</code>
+                    </pre>
                   </div>
-                )}
-                <textarea
-                  ref={commentInputRef}
-                  placeholder={
-                    currentUser
-                      ? `What are your thoughts, ${currentUser.name}?`
-                      : 'Share your thoughts...'
-                  }
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                />
-                <div className="comment-input-footer">
-                  <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>
-                    Be respectful.
-                  </span>
-                  <button
-                    type="submit"
-                    className="btn-primary"
-                    style={{ padding: '0.35rem 0.9rem', fontSize: '0.8rem' }}
-                  >
-                    Post Comment
+                );
+              }
+              return (
+                <div key={index} className="editorial-text-block">
+                  {chunk.split('\n\n').map((para, pIdx) => (
+                    <p key={pIdx}>{para}</p>
+                  ))}
+                </div>
+              );
+            })}
+          </article>
+
+          {/* Engagement Bottom Bar */}
+          <div className="editorial-engagement-bar">
+            <div className="editorial-engagement-left">
+              <button
+                className={`wp-clap-pill large ${likedPosts.includes(readingPost._id) ? 'clapped' : ''}`}
+                title={likedPosts.includes(readingPost._id) ? 'Unlike' : 'Like'}
+                onClick={(e) => handleLikeToggle(readingPost._id, e)}
+              >
+                <svg viewBox="0 0 24 24">
+                  <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                </svg>
+                <span>{typeof readingPost.likes === 'number' ? readingPost.likes : (readingPost.claps || 0)}</span>
+              </button>
+
+              <button
+                className={`btn-bookmark-round large ${bookmarkedPostIds.includes(readingPost._id) ? 'bookmarked' : ''}`}
+                onClick={(e) => toggleBookmark(readingPost._id, e)}
+                title="Bookmark article"
+              >
+                <svg viewBox="0 0 24 24">
+                  <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="editorial-engagement-right">
+              {isAuthorOfPost(readingPost) && (
+                <button className="btn-sm" onClick={(e) => handleEdit(readingPost, e)}>
+                  Edit
+                </button>
+              )}
+              {canDeletePost(readingPost) && (
+                <button className="btn-sm delete" onClick={(e) => promptDelete(readingPost, e)}>
+                  {currentUser?.role === 'admin' && !isAuthorOfPost(readingPost) ? '🛡️ Admin Delete' : 'Delete'}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Discussion & Reviews Section */}
+          <section className="editorial-discussion-section">
+            <div className="discussion-header">
+              <h3>Discussion ({readingPost.comments?.length || 0})</h3>
+            </div>
+
+            <form onSubmit={handleAddComment} noValidate className="comment-input-card">
+              {replyParentId && (
+                <div className="reply-badge">
+                  <span>↳ Replying to comment...</span>
+                  <button type="button" onClick={() => setReplyParentId(null)}>
+                    (Cancel)
                   </button>
                 </div>
-              </form>
+              )}
+              <textarea
+                ref={commentInputRef}
+                placeholder={
+                  currentUser
+                    ? `What are your thoughts, ${currentUser.name}?`
+                    : 'Share your thoughts...'
+                }
+                value={commentText}
+                onChange={(e) => setCommentText(e.target.value)}
+              />
+              <div className="comment-input-footer">
+                <span style={{ fontSize: '0.72rem', color: '#94a3b8' }}>Be respectful.</span>
+                <button type="submit" className="btn-primary" style={{ padding: '0.35rem 0.9rem', fontSize: '0.8rem' }}>
+                  Post Comment
+                </button>
+              </div>
+            </form>
 
-              <div className="comments-list">
-                {!readingPost.comments || readingPost.comments.length === 0 ? (
-                  <p
-                    style={{
-                      color: '#94a3b8',
-                      fontSize: '0.85rem',
-                      fontStyle: 'italic',
-                      textAlign: 'center',
-                      padding: '1rem'
-                    }}
-                  >
-                    No comments yet. Start the conversation!
-                  </p>
-                ) : (
-                  readingPost.comments
-                    ?.filter((c) => !c.parentId)
-                    .map((parent) => {
-                      const canDeleteReview = isAuthorOfComment(parent);
+            <div className="comments-list">
+              {!readingPost.comments || readingPost.comments.length === 0 ? (
+                <p style={{ color: '#94a3b8', fontSize: '0.85rem', fontStyle: 'italic', textAlign: 'center', padding: '1.5rem' }}>
+                  No comments yet. Start the conversation!
+                </p>
+              ) : (
+                readingPost.comments
+                  ?.filter((c) => !c.parentId)
+                  .map((parent) => {
+                    const canDeleteReview = isAuthorOfComment(parent);
 
-                      return (
-                        <div key={parent._id} className="comment-node">
-                          <div className="creative-comment">
-                            <div className="comment-meta">
-                              <div className="comment-author-group">
-                                <div className="comment-avatar">
-                                  {parent.author ? parent.author[0] : 'U'}
-                                </div>
-                                <div>
-                                  <span className="comment-author-name">{parent.author}</span>
-                                  {parent.author?.toLowerCase().trim() === readingPost.author?.toLowerCase().trim() && (
-                                    <span className="author-chip" style={{ marginLeft: '0.3rem' }}>
-                                      Author
-                                    </span>
-                                  )}
-                                  <div className="comment-date">
-                                    {new Date(parent.createdAt || Date.now()).toLocaleDateString('en-US', {
-                                      month: 'short',
-                                      day: 'numeric'
-                                    })}
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div className="comment-controls">
-                                <button
-                                  type="button"
-                                  className="btn-reply-link"
-                                  onClick={(e) => handleReplyClick(parent._id, e)}
-                                >
-                                  Reply
-                                </button>
-
-                                {canDeleteReview && (
-                                  <button
-                                    type="button"
-                                    className="btn-delete-comment"
-                                    title="Delete your review"
-                                    onClick={(e) => promptDeleteComment(parent, e)}
-                                  >
-                                    <svg viewBox="0 0 24 24">
-                                      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                                    </svg>
-                                  </button>
+                    return (
+                      <div key={parent._id} className="comment-node">
+                        <div className="creative-comment">
+                          <div className="comment-meta">
+                            <div className="comment-author-group">
+                              <div className="comment-avatar">{parent.author ? parent.author[0] : 'U'}</div>
+                              <div>
+                                <span className="comment-author-name">{parent.author}</span>
+                                {parent.author?.toLowerCase().trim() === readingPost.author?.toLowerCase().trim() && (
+                                  <span className="author-chip" style={{ marginLeft: '0.3rem' }}>
+                                    Author
+                                  </span>
                                 )}
+                                <div className="comment-date">
+                                  {new Date(parent.createdAt || Date.now()).toLocaleDateString('en-US', {
+                                    month: 'short',
+                                    day: 'numeric'
+                                  })}
+                                </div>
                               </div>
                             </div>
 
-                            <p className="comment-body-text">{parent.content}</p>
+                            <div className="comment-controls">
+                              <button type="button" className="btn-reply-link" onClick={(e) => handleReplyClick(parent._id, e)}>
+                                Reply
+                              </button>
+
+                              {canDeleteReview && (
+                                <button
+                                  type="button"
+                                  className="btn-delete-comment"
+                                  title="Delete your review"
+                                  onClick={(e) => promptDeleteComment(parent, e)}
+                                >
+                                  <svg viewBox="0 0 24 24">
+                                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                                  </svg>
+                                </button>
+                              )}
+                            </div>
                           </div>
 
-                          {readingPost.comments
-                            ?.filter((c) => c.parentId === parent._id)
-                            .map((reply) => {
-                              const canDeleteReply = isAuthorOfComment(reply);
+                          <p className="comment-body-text">{parent.content}</p>
+                        </div>
 
-                              return (
-                                <div key={reply._id} className="creative-comment is-reply">
-                                  <div className="comment-meta">
-                                    <div className="comment-author-group">
-                                      <div
-                                        className="comment-avatar"
-                                        style={{ width: '24px', height: '24px', fontSize: '0.68rem' }}
-                                      >
-                                        {reply.author ? reply.author[0] : 'U'}
-                                      </div>
-                                      <div>
-                                        <span className="comment-author-name">{reply.author}</span>
-                                        {reply.author?.toLowerCase().trim() === readingPost.author?.toLowerCase().trim() && (
-                                          <span className="author-chip" style={{ marginLeft: '0.3rem' }}>
-                                            Author
-                                          </span>
-                                        )}
-                                        <div className="comment-date">
-                                          {new Date(reply.createdAt || Date.now()).toLocaleDateString('en-US', {
-                                            month: 'short',
-                                            day: 'numeric'
-                                          })}
-                                        </div>
-                                      </div>
+                        {readingPost.comments
+                          ?.filter((c) => c.parentId === parent._id)
+                          .map((reply) => {
+                            const canDeleteReply = isAuthorOfComment(reply);
+
+                            return (
+                              <div key={reply._id} className="creative-comment is-reply">
+                                <div className="comment-meta">
+                                  <div className="comment-author-group">
+                                    <div className="comment-avatar" style={{ width: '24px', height: '24px', fontSize: '0.68rem' }}>
+                                      {reply.author ? reply.author[0] : 'U'}
                                     </div>
-
-                                    <div className="comment-controls">
-                                      <button
-                                        type="button"
-                                        className="btn-reply-link"
-                                        onClick={(e) => handleReplyClick(parent._id, e)}
-                                      >
-                                        Reply
-                                      </button>
-
-                                      {canDeleteReply && (
-                                        <button
-                                          type="button"
-                                          className="btn-delete-comment"
-                                          title="Delete your reply"
-                                          onClick={(e) => promptDeleteComment(reply, e)}
-                                        >
-                                          <svg viewBox="0 0 24 24">
-                                            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                                          </svg>
-                                        </button>
+                                    <div>
+                                      <span className="comment-author-name">{reply.author}</span>
+                                      {reply.author?.toLowerCase().trim() === readingPost.author?.toLowerCase().trim() && (
+                                        <span className="author-chip" style={{ marginLeft: '0.3rem' }}>
+                                          Author
+                                        </span>
                                       )}
+                                      <div className="comment-date">
+                                        {new Date(reply.createdAt || Date.now()).toLocaleDateString('en-US', {
+                                          month: 'short',
+                                          day: 'numeric'
+                                        })}
+                                      </div>
                                     </div>
                                   </div>
 
-                                  <p className="comment-body-text">{reply.content}</p>
+                                  <div className="comment-controls">
+                                    <button type="button" className="btn-reply-link" onClick={(e) => handleReplyClick(parent._id, e)}>
+                                      Reply
+                                    </button>
+
+                                    {canDeleteReply && (
+                                      <button
+                                        type="button"
+                                        className="btn-delete-comment"
+                                        title="Delete your reply"
+                                        onClick={(e) => promptDeleteComment(reply, e)}
+                                      >
+                                        <svg viewBox="0 0 24 24">
+                                          <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                                        </svg>
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
-                              );
-                            })}
-                        </div>
-                      );
-                    })
-                )}
-              </div>
+
+                                <p className="comment-body-text">{reply.content}</p>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    );
+                  })
+              )}
+            </div>
+          </section>
+
+          <div style={{ textAlign: 'center', margin: '3rem 0 5rem' }}>
+            <button className="btn-primary" onClick={closeReadingModal} style={{ padding: '0.75rem 2rem' }}>
+              ← Return to All Articles
+            </button>
+          </div>
+        </main>
+      ) : (
+        /* HOME FEED VIEW */
+        <>
+          <section className="hero">
+            <div>
+              <h2>Articles & Editorial</h2>
+              <p>Insights, industry news, and guides</p>
             </div>
 
-            <div className="modal-footer" style={{ marginTop: '1.5rem' }}>
-              <button className="btn-primary" onClick={closeReadingModal}>
-                Done Reading
+            <div className="hero-controls">
+              <input
+                type="text"
+                className="search-input"
+                placeholder="Search articles..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+
+              <select
+                className="sort-select"
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+              >
+                <option value="newest">📅 Newest</option>
+                <option value="oldest">⏳ Oldest</option>
+                <option value="mostViewed">🔥 Most Viewed</option>
+              </select>
+            </div>
+          </section>
+
+          <div className="category-chips-wrapper">
+            <div className="category-chips">
+              <button
+                className={`chip saved-chip ${selectedCategory === 'Bookmarks' ? 'active' : ''}`}
+                onClick={() => setSelectedCategory('Bookmarks')}
+              >
+                🔖 Bookmarks ({bookmarkedPostIds.length})
+              </button>
+
+              {PRESET_CATEGORIES.map((cat) => (
+                <button
+                  key={cat}
+                  className={`chip ${selectedCategory === cat ? 'active' : ''}`}
+                  onClick={() => setSelectedCategory(cat)}
+                >
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="loading-container">
+              <div className="spinner"></div>
+              <p>Loading articles...</p>
+            </div>
+          ) : (
+            <main className="posts-grid">
+              {filteredPosts.length === 0 ? (
+                <p style={{ color: '#94a3b8', gridColumn: '1 / -1', padding: '3rem 0', textAlign: 'center' }}>
+                  {selectedCategory === 'Bookmarks'
+                    ? 'You have not saved any articles yet. Click the ribbon icon on any post to bookmark it!'
+                    : 'No articles found matching your criteria.'}
+                </p>
+              ) : (
+                filteredPosts.map((post, idx) => {
+                  const isAdmin = currentUser?.role === 'admin';
+                  const isAuthor = isAuthorOfPost(post);
+                  const hasDeleteRights = canDeletePost(post);
+                  const isLiked = likedPosts.includes(post._id);
+                  const isSaved = bookmarkedPostIds.includes(post._id);
+                  const displayLikes = typeof post.likes === 'number' ? post.likes : (post.claps || 0);
+                  const displayAuthorName = getDisplayAuthor(post);
+
+                  return (
+                    <article
+                      key={post._id || idx}
+                      className="card"
+                      onClick={() => openReadingModal(post)}
+                    >
+                      <div className="card-img-wrapper">
+                        <img
+                          src={
+                            post.imageUrl && post.imageUrl.trim() !== ''
+                              ? post.imageUrl
+                              : `[https://picsum.photos/seed/$](https://picsum.photos/seed/$){post._id || idx}/700/400`
+                          }
+                          alt="Banner"
+                          className="card-img"
+                        />
+
+                        <div className="views-badge" title={`${Number(post.views) || 0} views`}>
+                          <svg viewBox="0 0 24 24">
+                            <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z" />
+                          </svg>
+                          <span>{Number(post.views) || 0}</span>
+                        </div>
+                      </div>
+
+                      <div className="card-body">
+                        <div className="card-tag-row">
+                          <span className="card-tag">{post.category || 'General'}</span>
+                          {post.status === 'draft' && <span className="draft-badge">Draft</span>}
+                        </div>
+
+                        <h3 className="card-title">{post.title}</h3>
+                        <p className="card-excerpt">{post.content.replace(/<[^>]*>/g, '')}</p>
+
+                        <div className="card-footer">
+                          <div className="author-info">
+                            <span className="author-name">{displayAuthorName}</span>
+                            <span className="post-date">
+                              {post.readTime || 1} min read •{' '}
+                              {new Date(post.createdAt || Date.now()).toLocaleDateString('en-US', {
+                                month: 'short',
+                                day: 'numeric'
+                              })}
+                            </span>
+                          </div>
+
+                          <div className="actions">
+                            <button
+                              className={`btn-bookmark ${isSaved ? 'bookmarked' : ''}`}
+                              title={isSaved ? 'Remove Bookmark' : 'Save for Later'}
+                              onClick={(e) => toggleBookmark(post._id, e)}
+                            >
+                              <svg viewBox="0 0 24 24">
+                                <path d="M17 3H7c-1.1 0-2 .9-2 2v16l7-3 7 3V5c0-1.1-.9-2-2-2z" />
+                              </svg>
+                            </button>
+
+                            <button
+                              className={`wp-clap-pill ${isLiked ? 'clapped' : ''}`}
+                              title={isLiked ? 'Unlike' : 'Like'}
+                              onClick={(e) => handleLikeToggle(post._id, e)}
+                            >
+                              <svg viewBox="0 0 24 24">
+                                <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                              </svg>
+                              <span>{displayLikes}</span>
+                            </button>
+
+                            {isAuthor && (
+                              <button
+                                className="btn-sm"
+                                title="Edit your article"
+                                onClick={(e) => handleEdit(post, e)}
+                              >
+                                Edit
+                              </button>
+                            )}
+
+                            {hasDeleteRights && (
+                              <button
+                                className="btn-sm delete"
+                                title={isAdmin && !isAuthor ? "Delete as Admin" : "Delete article"}
+                                onClick={(e) => promptDelete(post, e)}
+                              >
+                                {isAdmin && !isAuthor ? '🛡️ Admin Delete' : 'Delete'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })
+              )}
+            </main>
+          )}
+        </>
+      )}
+
+      {/* 5. Delete Article Confirmation Dialog */}
+      {deleteTargetId && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={() => setDeleteTargetId(null)}>
+          <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-icon">!</div>
+            <h3>Delete Article?</h3>
+            <p>
+              {currentUser?.role === 'admin'
+                ? 'As an Administrator, this action will permanently remove this article from the platform.'
+                : 'Are you sure you want to permanently delete your article? This cannot be undone.'}
+            </p>
+            <div className="confirm-actions">
+              <button type="button" className="btn-sm" onClick={() => setDeleteTargetId(null)}>
+                Cancel
+              </button>
+              <button type="button" className="btn-danger" onClick={confirmDelete}>
+                Yes, Delete
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 9. Create / Edit Article Modal */}
+      {/* 6. Delete Comment Confirmation Dialog */}
+      {deleteCommentTargetId && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }} onClick={() => setDeleteCommentTargetId(null)}>
+          <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
+            <div className="confirm-icon">!</div>
+            <h3>Delete Review?</h3>
+            <p>Are you sure you want to delete your review? Any replies attached to this discussion will also be removed.</p>
+            <div className="confirm-actions">
+              <button type="button" className="btn-sm" onClick={() => setDeleteCommentTargetId(null)}>
+                Cancel
+              </button>
+              <button type="button" className="btn-danger" onClick={confirmDeleteComment}>
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7. Create / Edit Article Modal */}
       {isModalOpen && (
         <div className="modal-overlay" onClick={closeCreateModal}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
@@ -1553,7 +1498,7 @@ export default function App() {
                 &times;
               </button>
             </div>
-            
+
             <form className="modal-form" onSubmit={(e) => handleSubmit('published', e)}>
               <input
                 name="title"
@@ -1577,7 +1522,6 @@ export default function App() {
                 ))}
               </datalist>
 
-              {/* Native Label Dropzone File Browser */}
               <div className="media-uploader-box">
                 <div className="media-uploader-header">
                   <span className="media-label">Article Cover Visual</span>
@@ -1664,18 +1608,10 @@ export default function App() {
               />
 
               <div className="modal-footer">
-                <button
-                  type="button"
-                  className="btn-sm"
-                  onClick={closeCreateModal}
-                >
+                <button type="button" className="btn-sm" onClick={closeCreateModal}>
                   Cancel
                 </button>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={(e) => handleSubmit('draft', e)}
-                >
+                <button type="button" className="btn-secondary" onClick={(e) => handleSubmit('draft', e)}>
                   Save Draft
                 </button>
                 <button type="submit" className="btn-primary">
@@ -1687,7 +1623,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 10. Authentication Modal */}
+      {/* 8. Authentication Modal */}
       {isAuthModalOpen && (
         <div className="modal-overlay" onClick={() => { setIsAuthModalOpen(false); clearHash(); }}>
           <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
@@ -1771,7 +1707,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 11. Hidden Administrative Gateway Modal */}
+      {/* 9. Administrative Gateway Modal */}
       {isAdminPortalOpen && (
         <div className="modal-overlay" onClick={() => { setIsAdminPortalOpen(false); clearHash(); }}>
           <div className="confirm-box" onClick={(e) => e.stopPropagation()}>
