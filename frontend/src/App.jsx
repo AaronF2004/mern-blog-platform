@@ -883,8 +883,8 @@ export default function App() {
     });
 
   return (
-    <div className="app-layout">
-      {/* 1. Centered Toast / Status Dialog */}
+    <div>
+      {/* 1. Centered Status Dialog */}
       {centerAlert && (
         <div className="center-toast-overlay" onClick={closeAlert}>
           <div className="center-toast-box" onClick={(e) => e.stopPropagation()}>
@@ -900,9 +900,10 @@ export default function App() {
         </div>
       )}
 
-      {/* 2. Fully Responsive Header & Navbar */}
+      {/* 2. Top Navbar with Bigger Logo & User Avatar Dropdown at Right */}
       <header className="navbar">
         <div className="nav-container">
+          {/* Bigger Logo Branding */}
           <div
             className="logo"
             onClick={() => {
@@ -912,19 +913,19 @@ export default function App() {
               fetchPosts();
             }}
           >
-            <span className="logo-emoji">📰</span>
+            <span className="logo-icon">📰</span>
             <span className="logo-text">Dev<span>Press</span></span>
           </div>
 
+          {/* Action Row: + Write on left, Sign In outside, Human Icon on far right */}
           <div className="auth-actions">
-            <button className="nav-write-btn" onClick={openCreateModal}>
-              <span className="write-plus">+</span>
-              <span className="write-label">Write</span>
+            <button className="btn-primary write-btn" onClick={openCreateModal}>
+              + Write
             </button>
 
             {!currentUser ? (
               <button
-                className="nav-signin-btn"
+                className="btn-sm sign-in-btn"
                 onClick={() => {
                   setAuthError('');
                   setHash('#auth');
@@ -939,7 +940,7 @@ export default function App() {
                   type="button"
                   className={`user-avatar-btn ${currentUser.role === 'admin' ? 'admin-avatar' : ''}`}
                   onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
-                  title={currentUser.name}
+                  title="My Account"
                 >
                   <svg viewBox="0 0 24 24" className="human-icon-svg">
                     <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
@@ -951,7 +952,7 @@ export default function App() {
                     <div className="dropdown-user-header">
                       <div className="dropdown-user-name">{currentUser.name}</div>
                       <div className="dropdown-user-role">
-                        {currentUser.role === 'admin' ? '🛡️ Administrator' : '✍️ Author'}
+                        {currentUser.role === 'admin' ? '🛡️ Administrator' : '✍️ Author Account'}
                       </div>
                     </div>
                     <div className="dropdown-divider"></div>
@@ -1115,6 +1116,7 @@ export default function App() {
                           <span>{displayLikes}</span>
                         </button>
 
+                        {/* EDIT BUTTON: strictly visible only to author */}
                         {isAuthor && (
                           <button
                             className="btn-sm"
@@ -1125,6 +1127,7 @@ export default function App() {
                           </button>
                         )}
 
+                        {/* DELETE BUTTON: visible to author, or to Admin as Admin Delete */}
                         {hasDeleteRights && (
                           <button
                             className="btn-sm delete"
@@ -1818,7 +1821,7 @@ export default function App() {
                   Close
                 </button>
                 <button type="submit" className="btn-primary" style={{ background: '#dc2626' }}>
-                  Authorize Admin
+                  Admin
                 </button>
               </div>
             </form>
